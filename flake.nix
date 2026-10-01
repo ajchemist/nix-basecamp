@@ -62,10 +62,56 @@
       };
     in
     {
-      lib = { inherit mkDarwin mkHome; };
+      lib = {
+        inherit mkDarwin mkHome;
+        emacsPackage = { system, gui ? false }:
+          (import ./lib/emacs.nix { inherit lib; }).package {
+            pkgs = nixpkgs.legacyPackages.${system};
+            inherit gui;
+          };
+      };
+      homeModules.emacs = import ./home/emacs;
 
       darwinConfigurations.fixture = mkDarwin { user = "fixture"; };
       homeConfigurations.fixture = mkHome { user = "fixture"; };
+
+      checks = lib.genAttrs [ "aarch64-darwin" "x86_64-linux" ] (system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          fixture = extra: (home-manager.lib.homeManagerConfiguration {
+            inherit pkgs;
+            modules = [ self.homeModules.emacs {
+              home.username = "fixture";
+              home.homeDirectory = "/tmp/basecamp-fixture";
+              home.stateVersion = "25.05";
+            } extra ];
+          }).config;
+          disabled = fixture { };
+          gui = fixture { basecamp.emacs = { enable = true; gui = true; }; };
+          nox = fixture { basecamp.emacs = { enable = true; gui = false; }; };
+        in {
+          emacs-setup =
+            assert !disabled.basecamp.emacs.enable;
+            assert !(lib.elem pkgs.emacs disabled.home.packages);
+            assert gui.basecamp.emacs.package == pkgs.emacs;
+            assert nox.basecamp.emacs.package == pkgs.emacs-nox;
+            assert lib.all (name: !(lib.hasPrefix "emacs/" name)) (builtins.attrNames gui.xdg.configFile);
+            assert lib.all (name: !(lib.hasPrefix "emacs/" name)) (builtins.attrNames nox.xdg.configFile);
+            assert !(gui.home.file ? ".emacs");
+            assert !(gui.home.file ? ".emacs.d");
+            pkgs.runCommand "emacs-setup-tests" {
+              nativeBuildInputs = [ pkgs.python3 pkgs.bash pkgs.coreutils ];
+              BASECAMP_HANDOVER = pkgs.writeShellScript "emacs-handover" (
+                ''run() { "$@"; }
+'' + gui.home.activation.basecampEmacsStandalone.data
+              );
+            } ''
+              cp -r ${./ci} ci
+              cp -r ${./lib} lib
+              python3 ci/test-emacs-setup.py
+              touch "$out"
+            '';
+        });
 
       # ------------------------------------------------------------------ macOS
       apps.aarch64-darwin =
@@ -207,7 +253,15 @@
           };
         in
         {
-          default = mkApp "Plan, confirm, and apply the full macOS setup for the invoking user" bootstrap;
+          default = mkApp "Set up macOS with optional Emacs" (import ./lib/emacs-app.nix {
+            inherit pkgs lib self plan;
+            system = "aarch64-darwin";
+            setup = bootstrap;
+          });
+          emacs = mkApp "Install optional Emacs without changing system or Home Manager profiles" (import ./lib/emacs-app.nix {
+            inherit pkgs lib self;
+            system = "aarch64-darwin";
+          });
           plan = mkApp "Show module status (read-only)" plan;
           homebrew = mkApp "Install Homebrew if missing" homebrew;
           darwin = mkApp "Build and activate the nix-darwin system for the invoking user" darwin;
@@ -237,7 +291,15 @@
           };
         in
         {
-          default = mkApp "Build and activate the home-manager configuration for the invoking user" home;
+          default = mkApp "Set up Linux with optional Emacs" (import ./lib/emacs-app.nix {
+            inherit pkgs lib self;
+            system = "x86_64-linux";
+            setup = home;
+          });
+          emacs = mkApp "Install optional Emacs without changing Home Manager profiles" (import ./lib/emacs-app.nix {
+            inherit pkgs lib self;
+            system = "x86_64-linux";
+          });
           home = mkApp "Build and activate the home-manager configuration for the invoking user" home;
         };
     };

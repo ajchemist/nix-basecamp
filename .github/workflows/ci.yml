@@ -18,6 +18,8 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - name: Evaluate all outputs
         run: nix flake check --all-systems --no-build
+      - name: Emacs selection and module checks
+        run: nix build ".#checks.$(nix eval --impure --raw --expr builtins.currentSystem).emacs-setup"
 
   darwin:
     runs-on: macos-latest # arm64
