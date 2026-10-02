@@ -95,20 +95,44 @@ The standalone app owns a dedicated GC root at
 `~/.local/state/nix-basecamp/emacs/package`, plus symlinks at
 `~/.local/bin/emacs` and `~/.local/bin/emacsclient`. Ensure `~/.local/bin` is on
 PATH, or run `~/.local/bin/emacs` directly. macOS GUI installs also appear at
-`~/Applications/Nix Basecamp Emacs.app`; open that app in Finder or with:
+`~/Applications/Emacs.app`; open that app in Finder or with:
 
 ```sh
-open "$HOME/Applications/Nix Basecamp Emacs.app"
+open "$HOME/Applications/Emacs.app"
 ```
 
-Existing binaries at those destinations are reported as conflicts and preserved.
-Other Homebrew/Nix Emacs installations are left in place. The setup preserves
-`~/.emacs`, `~/.emacs.d`, XDG init files, packages, and Custom state. It provides
-no init, theme, keybindings, or package archive policy. On macOS it warms the
-built-in native Lisp first-load checks in the background once per package path;
-you can use Emacs while this runs. Removal leaves user config and caches intact.
+Nix's `Emacs.app` is the only one once the GUI build is set up (standalone or
+module): Homebrew casks that install an `Emacs.app` (`emacs`, `emacs-app`,
+`emacs-mac`) are uninstalled through brew, and any other `Emacs.app` in
+`/Applications` or `~/Applications` is moved to `Emacs.app.before-basecamp`
+(never deleted). A `nox` setup leaves them alone. Existing binaries at
+`~/.local/bin/{emacs,emacsclient}` are reported as conflicts and preserved. The
+setup preserves `~/.emacs`, `~/.emacs.d`, XDG init files, packages, and Custom
+state. It provides no init, theme, keybindings, or package archive policy.
+Removal leaves user config and caches intact.
 
-Downstream Home Manager configurations can use the public module directly:
+### Native Lisp warm-up (macOS)
+
+macOS vets every Mach-O the first time it is `dlopen`ed (~0.3 s per file,
+serialised, then cached per file). Emacs ships ~3000 ahead-of-time compiled
+`.eln` files, so without help the first use of each built-in feature stalls.
+Basecamp pays this once per Emacs store path, in the background (~15 min, no
+CPU; Emacs is usable meanwhile), with a small C program (libSystem only; no
+perl or python on the host). A second run while one is going is a no-op; a run
+cut short by a reboot restarts on the next setup.
+
+### Version policy
+
+Basecamp pins the Emacs **major** (`lib/emacs.nix`, currently 31:
+`emacs31` / `emacs31-nox`). Inside a major, nixpkgs updates flow through with
+no change here. Basecamp's Emacs code changes only to move to the next major,
+or when nixpkgs drops the pinned one (evaluation then fails with nixpkgs' own
+message).
+
+### Contract for downstream flakes
+
+Downstream Home Manager configurations import the module and set only
+`enable` and `gui`; everything else is read-only and must be used as given:
 
 ```nix
 {
@@ -121,12 +145,17 @@ Downstream Home Manager configurations can use the public module directly:
 }
 ```
 
-`basecamp.emacs.package` exposes the selected package for compiling downstream
-init files; `basecamp.emacs.warmProgram` exposes the macOS native Lisp warmer.
+| Provided | What downstream does with it |
+|---|---|
+| `basecamp.emacs.major` (read-only) | Labels; never pins its own Emacs. |
+| `basecamp.emacs.package` (read-only) | The only Emacs: compile init files against it, never name an `emacs*` attribute. |
+| `basecamp.emacs.warmProgram` (read-only) | `bin/eln-warm DIR...` for any `.eln` it produces (init files, packages); `bin/eln-warm-store status EMACS` for status. |
+| `lib.emacsMajor`, `lib.emacsPackage { system; gui; }`, `lib.emacsWarm { system; }` | The same values for code evaluated outside the module (a status command). |
+
 The module installs into the existing Home Manager profile and retires symlinks
 from an earlier standalone install so they cannot shadow its selected build.
 It never deploys or relocates init files. nix-citadel uses this module and adds
-its own configuration and optimizations.
+its own configuration on top.
 
 For testing an unpublished checkout, use `nix run path:.#emacs` (the `path:`
 form includes new, untracked module files).

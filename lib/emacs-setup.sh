@@ -40,7 +40,7 @@ echo "Emacs: $mode · dedicated basecamp installation · existing init files pre
 if [ "$mode" != none ]; then
   echo "  binaries: $HOME/.local/bin/{emacs,emacsclient} (add ~/.local/bin to PATH)"
   if [ "$BASECAMP_DARWIN" = 1 ] && [ "$mode" = gui ]; then
-    echo "  application: $HOME/Applications/Nix Basecamp Emacs.app"
+    echo "  application: $HOME/Applications/Emacs.app (other Emacs.app bundles are moved aside)"
   fi
 fi
 if [ "$dry_run" = 1 ]; then
@@ -56,8 +56,10 @@ if [ "$assume_yes" = 0 ]; then
   read -r answer </dev/tty || answer=""
   case "$answer" in y|Y|yes|YES) ;; *) exit 1 ;; esac
 fi
-app="$HOME/Applications/Nix Basecamp Emacs.app"
+app="$HOME/Applications/Emacs.app"
 owned_link() { [ -L "$1" ] && [ "$(readlink "$1")" = "$2" ]; }
+# The standalone app's name before Emacs.app; only an owned link is removed.
+old_app="$HOME/Applications/Nix Basecamp Emacs.app"
 # Check all destinations before changing any of them or the main setup.
 if [ "$mode" != none ]; then
   for bin in emacs emacsclient; do
@@ -67,12 +69,6 @@ if [ "$mode" != none ]; then
       exit 1
     fi
   done
-  if [ "$BASECAMP_DARWIN" = 1 ] && [ "$mode" = gui ]; then
-    if { [ -e "$app" ] || [ -L "$app" ]; } && ! owned_link "$app" "$profile/Applications/Emacs.app"; then
-      echo "Emacs: refusing to replace $app" >&2
-      exit 1
-    fi
-  fi
 fi
 if [ -n "$BASECAMP_SETUP" ]; then "$BASECAMP_SETUP" --yes; fi
 if [ "$mode" = none ]; then
@@ -80,7 +76,9 @@ if [ "$mode" = none ]; then
     dest="$HOME/.local/bin/$bin"
     if owned_link "$dest" "$profile/bin/$bin"; then rm "$dest"; fi
   done
-  if owned_link "$app" "$profile/Applications/Emacs.app"; then rm "$app"; fi
+  for a in "$app" "$old_app"; do
+    if owned_link "$a" "$profile/Applications/Emacs.app"; then rm "$a"; fi
+  done
   # This link is the GC root of the standalone install, not a user profile.
   if [ -L "$profile" ]; then rm "$profile"; fi
 else
@@ -94,20 +92,18 @@ else
     ln -sfn "$profile/bin/$bin" "$HOME/.local/bin/$bin"
   done
   if [ "$BASECAMP_DARWIN" = 1 ]; then
+    if owned_link "$old_app" "$profile/Applications/Emacs.app"; then rm "$old_app"; fi
     if [ "$mode" = gui ]; then
+      # Nix's Emacs.app is the only one: others are moved aside (casks via brew).
+      keep=""
+      if owned_link "$app" "$profile/Applications/Emacs.app"; then keep="$app"; fi
+      bash "$BASECAMP_APP_TAKEOVER" "$keep"
       mkdir -p "$HOME/Applications"
       ln -sfn "$profile/Applications/Emacs.app" "$app"
     elif owned_link "$app" "$profile/Applications/Emacs.app"; then
       rm "$app"
     fi
-    package="$(readlink -f "$profile")"
-    mark="$HOME/.cache/emacs/eln-warmed.$(basename "$package")"
-    if [ ! -e "$mark" ] && ! kill -0 "$(cat "$mark.pid" 2>/dev/null)" 2>/dev/null; then
-      mkdir -p "$HOME/.cache/emacs"
-      # shellcheck disable=SC2016 # Expanded by the child shell.
-      nohup sh -c 'echo $$ >"$2.pid"; "$0" "$1" && mv "$2.pid" "$2"' \
-        "$BASECAMP_WARM" "$package/lib/emacs" "$mark" >/dev/null 2>&1 </dev/null &
-    fi
+    "$BASECAMP_WARM" start "$(readlink -f "$profile")"
   fi
   "$profile/bin/emacs" --batch -Q --eval '(princ (concat "Emacs ready: " emacs-version "\n"))'
 fi

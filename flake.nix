@@ -19,6 +19,7 @@
   outputs = { self, nixpkgs, nix-darwin, home-manager, ... }:
     let
       lib = nixpkgs.lib;
+      emacs = import ./lib/emacs.nix { inherit lib; };
 
       ruleFile = ./home/karabiner/korean-left-modifiers.json;
       ruleDesc = (builtins.fromJSON (builtins.readFile ruleFile)).description;
@@ -62,13 +63,15 @@
       };
     in
     {
+      # Basecamp's Emacs contract for flakes that evaluate outside the module
+      # (a downstream plan, the standalone app): the pinned major, the package,
+      # the warmer. Same values as the module's read-only options.
       lib = {
         inherit mkDarwin mkHome;
+        emacsMajor = emacs.major;
         emacsPackage = { system, gui ? false }:
-          (import ./lib/emacs.nix { inherit lib; }).package {
-            pkgs = nixpkgs.legacyPackages.${system};
-            inherit gui;
-          };
+          emacs.package { pkgs = nixpkgs.legacyPackages.${system}; inherit gui; };
+        emacsWarm = { system }: emacs.warm nixpkgs.legacyPackages.${system};
       };
       homeModules.emacs = import ./home/emacs;
 
@@ -89,18 +92,21 @@
           disabled = fixture { };
           gui = fixture { basecamp.emacs = { enable = true; gui = true; }; };
           nox = fixture { basecamp.emacs = { enable = true; gui = false; }; };
+          warm = emacs.warm pkgs;
         in {
           emacs-setup =
             assert !disabled.basecamp.emacs.enable;
             assert !(lib.elem pkgs.emacs disabled.home.packages);
-            assert gui.basecamp.emacs.package == pkgs.emacs;
-            assert nox.basecamp.emacs.package == pkgs.emacs-nox;
+            assert gui.basecamp.emacs.package == pkgs.${"emacs" + emacs.major};
+            assert nox.basecamp.emacs.package == pkgs.${"emacs" + emacs.major + "-nox"};
+            assert lib.versions.major gui.basecamp.emacs.package.version == emacs.major;
             assert lib.all (name: !(lib.hasPrefix "emacs/" name)) (builtins.attrNames gui.xdg.configFile);
             assert lib.all (name: !(lib.hasPrefix "emacs/" name)) (builtins.attrNames nox.xdg.configFile);
             assert !(gui.home.file ? ".emacs");
             assert !(gui.home.file ? ".emacs.d");
             pkgs.runCommand "emacs-setup-tests" {
               nativeBuildInputs = [ pkgs.python3 pkgs.bash pkgs.coreutils ];
+              BASECAMP_WARM_REAL = "${warm}/bin/eln-warm-store";
               BASECAMP_HANDOVER = pkgs.writeShellScript "emacs-handover" (
                 ''run() { "$@"; }
 '' + gui.home.activation.basecampEmacsStandalone.data

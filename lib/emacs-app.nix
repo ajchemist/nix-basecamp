@@ -11,7 +11,8 @@ in pkgs.writeShellApplication {
     BASECAMP_FLAKE=${lib.escapeShellArg "path:${self}"}
     BASECAMP_SETUP=${lib.escapeShellArg (if setup == null then "" else lib.getExe setup)}
     BASECAMP_PLAN=${lib.escapeShellArg (if plan == null then "" else lib.getExe plan)}
-    BASECAMP_WARM=${emacs.warmProgram pkgs}
+    BASECAMP_WARM=${lib.optionalString pkgs.stdenv.hostPlatform.isDarwin "${emacs.warm pkgs}/bin/eln-warm-store"}
+    BASECAMP_APP_TAKEOVER=${emacs.appTakeover}
     ${builtins.readFile ./emacs-setup.sh}
   '';
 }
