@@ -68,9 +68,10 @@ Proceed? [y/N]
 
 ## Optional Emacs
 
-Emacs is **off by default** and installed through Home Manager like the rest
-of the setup (one way, both OSes: the user profile, and on macOS
-`~/Applications/Home Manager Apps/Emacs.app`). The setup command asks once on a
+Emacs is **off by default**. When chosen it is installed one way per OS
+([ADR 0001](docs/adr/0001-emacs-install-layers.md)): on macOS as a nix-darwin
+system package, with `Emacs.app` copied into `/Applications/Nix Apps`; on Linux
+through Home Manager. The setup command asks once on a
 terminal for `gui`, `nox` (terminal only) or `none`; the answer is saved in
 `~/.config/nix-basecamp/emacs` after a successful switch and reused afterwards.
 
@@ -83,7 +84,7 @@ nix run github:ajchemist/nix-basecamp -- --dry-run        # shows the choice, ch
 stays `none` and is asked again on the next interactive run). `#darwin` and
 Linux `#home` use the saved choice.
 
-A GUI setup makes nix's `Emacs.app` the only one: Homebrew casks that install
+On macOS a GUI setup makes nix's `Emacs.app` the only one: Homebrew casks that install
 an `Emacs.app` (`emacs`, `emacs-app`, `emacs-mac`) are uninstalled through brew,
 and any other `Emacs.app` in `/Applications` or `~/Applications` is moved to
 `Emacs.app.before-basecamp` (never deleted). A `nox` setup leaves them alone.
@@ -95,9 +96,10 @@ never touches `~/.emacs`, `~/.emacs.d` or `~/.config/emacs`.
 macOS vets every Mach-O the first time it is `dlopen`ed (~0.3 s per file,
 serialised, then cached per file). Emacs ships ~3000 ahead-of-time compiled
 `.eln` files, so without help the first use of each built-in feature stalls.
-Basecamp pays this once per Emacs store path, in the background (~15 min, no
-CPU; Emacs is usable meanwhile), with a small C program (libSystem only; no
-perl or python on the host). A second run while one is going is a no-op; a run
+Basecamp pays this once per Emacs store path, from nix-darwin's activation as
+the primary user, in the background (~15 min, no CPU; Emacs is usable
+meanwhile), with a small C program (libSystem only; no perl or python on the
+host). A second run while one is going is a no-op; a run
 cut short by a reboot restarts on the next setup.
 
 ### Version policy
@@ -110,32 +112,32 @@ message).
 
 ### Contract for downstream flakes
 
-Downstream Home Manager configurations import the module and set only
-`enable` and `gui`; everything else is read-only and must be used as given:
+A downstream built on `lib.mkDarwin` / `lib.mkHome` gets both modules already
+imported. It sets only `enable` and `gui`, where the install happens: in the
+nix-darwin configuration on macOS, in Home Manager on Linux. Everything else
+is read-only and must be used as given; under nix-darwin the Home Manager
+module mirrors the system's values read-only, so the home side reads the same
+options on both OSes.
 
 ```nix
-{
-  imports = [ basecamp.homeModules.emacs ];
-  basecamp.emacs = {
-    enable = true;
-    gui = true; # false for emacs-nox
-    # warmNativeLisp = false; # optional; defaults to true on macOS
-  };
-}
+# macOS (nix-darwin module list)
+{ basecamp.emacs = { enable = true; gui = true; }; }
+# Linux (Home Manager module list)
+{ basecamp.emacs = { enable = true; gui = false; }; }
 ```
 
 | Provided | What downstream does with it |
 |---|---|
+| `darwinModules.emacs`, `homeModules.emacs` | Already imported by the builders; importing them again is deduplicated. |
 | `basecamp.emacs.major` (read-only) | Labels; never pins its own Emacs. |
 | `basecamp.emacs.package` (read-only) | The only Emacs: compile init files against it, never name an `emacs*` attribute. |
 | `basecamp.emacs.warmProgram` (read-only) | `bin/eln-warm DIR...` for any `.eln` it produces (init files, packages); `bin/eln-warm-store status EMACS` for status. |
 | `lib.emacsMajor`, `lib.emacsPackage { system; gui; }`, `lib.emacsWarm { system; }` | The same values for code evaluated outside the module (a status command). |
 | `apps.<system>.plan` with `--no-emacs` | Embedding basecamp's plan without its Emacs row, which shows the setup app's choice rather than the downstream's settings. |
 
-`lib.mkDarwin`/`lib.mkHome` already import the module (`emacs = "gui" | "nox" |
-"none"` sets its defaults); a downstream flake that imports it again is
-deduplicated, and its own `enable`/`gui` win over those defaults. The module
-never deploys or relocates init files. nix-citadel uses this module and adds
+`lib.mkDarwin`/`lib.mkHome` take `emacs = "gui" | "nox" | "none"` as defaults
+for `enable`/`gui`; a downstream's own settings win. Neither module deploys or
+relocates init files. nix-citadel uses these modules and adds
 its own configuration on top.
 
 For testing an unpublished checkout, use `nix run path:.` (the `path:` form
@@ -160,7 +162,9 @@ flake.nix                       # inputs + module apps (the CLI surface)
 darwin/default.nix              # nix-darwin system config (homebrew casks, ...)
 home/darwin.nix                 # home-manager (karabiner rule activation)
 home/linux.nix                  # home-manager (linux)
-home/emacs/default.nix          # opt-in Emacs module (both OSes)
+darwin/emacs.nix                # opt-in Emacs, macOS: system package, warm-up, Emacs.app takeover
+home/emacs/default.nix          # opt-in Emacs, Linux install; read-only mirror under nix-darwin
+docs/adr/                       # design decisions
 lib/emacs.nix                   # Emacs contract: major, package, warmer, app takeover
 home/karabiner/*.json           # Karabiner rules
 lib/karabiner-upsert.nix        # shared jq upsert (app + home-manager activation)
