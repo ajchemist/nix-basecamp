@@ -45,27 +45,9 @@ in
 
   config = lib.mkIf cfg.enable {
     home.packages = [ cfg.package ];
-    # A previous standalone installation must not shadow this module's build.
-    # Only links owned by the standalone app are removed; user files stay put.
-    home.activation.basecampEmacsStandalone = lib.hm.dag.entryAfter [ "installPackages" ] ''
-      profile="$HOME/.local/state/nix-basecamp/emacs/package"
-      for bin in emacs emacsclient; do
-        dest="$HOME/.local/bin/$bin"
-        if [ -L "$dest" ] && [ "$(readlink "$dest")" = "$profile/bin/$bin" ]; then
-          run rm "$dest"
-        fi
-      done
-      # "Nix Basecamp Emacs.app" was the standalone name before Emacs.app.
-      for app in "$HOME/Applications/Emacs.app" "$HOME/Applications/Nix Basecamp Emacs.app"; do
-        if [ -L "$app" ] && [ "$(readlink "$app")" = "$profile/Applications/Emacs.app" ]; then
-          run rm "$app"
-        fi
-      done
-      if [ -L "$profile" ]; then run rm "$profile"; fi
-    '';
     # Ours lives in ~/Applications/Home Manager Apps; every other Emacs.app goes.
     home.activation.basecampEmacsApp = lib.mkIf (darwin && cfg.gui)
-      (lib.hm.dag.entryAfter [ "basecampEmacsStandalone" ] ''
+      (lib.hm.dag.entryAfter [ "writeBoundary" ] ''
         run ${pkgs.bash}/bin/bash ${emacs.appTakeover}
       '');
     home.activation.emacsElnWarm = lib.mkIf (darwin && cfg.warmNativeLisp)

@@ -68,48 +68,27 @@ Proceed? [y/N]
 
 ## Optional Emacs
 
-Emacs is **off by default**. Interactive `nix run github:ajchemist/nix-basecamp`
-asks for `gui`, `nox` (terminal only), or `none`. The choice is saved after a
-successful setup in `~/.config/nix-basecamp/emacs` and reused on subsequent runs.
-`--yes` skips confirmation; it does not opt you into an undecided module.
-
-For an Emacs-only setup, without applying Homebrew, Karabiner, nix-darwin, or
-Home Manager:
+Emacs is **off by default** and installed through Home Manager like the rest
+of the setup (one way, both OSes: the user profile, and on macOS
+`~/Applications/Home Manager Apps/Emacs.app`). The setup command asks once on a
+terminal for `gui`, `nox` (terminal only) or `none`; the answer is saved in
+`~/.config/nix-basecamp/emacs` after a successful switch and reused afterwards.
 
 ```sh
-nix run github:ajchemist/nix-basecamp#emacs -- --emacs=gui --dry-run
-nix run github:ajchemist/nix-basecamp#emacs -- --emacs=gui
-# Terminal-only, including a Linux server:
-nix run github:ajchemist/nix-basecamp#emacs -- --emacs=nox --yes
-# Reapply the saved choice:
-nix run github:ajchemist/nix-basecamp#emacs -- --yes
-# Remove only the standalone Emacs installation:
-nix run github:ajchemist/nix-basecamp#emacs -- --emacs=none --yes
+nix run github:ajchemist/nix-basecamp -- --emacs=gui      # or nox / none
+nix run github:ajchemist/nix-basecamp -- --dry-run        # shows the choice, changes nothing
 ```
 
-The same `--emacs=gui|nox|none` flags work with the default setup command.
-`--dry-run` never prompts, writes choices, builds Emacs, or activates anything.
-A fresh Emacs-only `--yes` run needs an explicit choice.
+`--yes` skips confirmation; it does not opt you into an undecided Emacs (it
+stays `none` and is asked again on the next interactive run). `#darwin` and
+Linux `#home` use the saved choice.
 
-The standalone app owns a dedicated GC root at
-`~/.local/state/nix-basecamp/emacs/package`, plus symlinks at
-`~/.local/bin/emacs` and `~/.local/bin/emacsclient`. Ensure `~/.local/bin` is on
-PATH, or run `~/.local/bin/emacs` directly. macOS GUI installs also appear at
-`~/Applications/Emacs.app`; open that app in Finder or with:
-
-```sh
-open "$HOME/Applications/Emacs.app"
-```
-
-Nix's `Emacs.app` is the only one once the GUI build is set up (standalone or
-module): Homebrew casks that install an `Emacs.app` (`emacs`, `emacs-app`,
-`emacs-mac`) are uninstalled through brew, and any other `Emacs.app` in
-`/Applications` or `~/Applications` is moved to `Emacs.app.before-basecamp`
-(never deleted). A `nox` setup leaves them alone. Existing binaries at
-`~/.local/bin/{emacs,emacsclient}` are reported as conflicts and preserved. The
-setup preserves `~/.emacs`, `~/.emacs.d`, XDG init files, packages, and Custom
-state. It provides no init, theme, keybindings, or package archive policy.
-Removal leaves user config and caches intact.
+A GUI setup makes nix's `Emacs.app` the only one: Homebrew casks that install
+an `Emacs.app` (`emacs`, `emacs-app`, `emacs-mac`) are uninstalled through brew,
+and any other `Emacs.app` in `/Applications` or `~/Applications` is moved to
+`Emacs.app.before-basecamp` (never deleted). A `nox` setup leaves them alone.
+Basecamp provides no init, theme, keybindings, or package archive policy, and
+never touches `~/.emacs`, `~/.emacs.d` or `~/.config/emacs`.
 
 ### Native Lisp warm-up (macOS)
 
@@ -152,13 +131,14 @@ Downstream Home Manager configurations import the module and set only
 | `basecamp.emacs.warmProgram` (read-only) | `bin/eln-warm DIR...` for any `.eln` it produces (init files, packages); `bin/eln-warm-store status EMACS` for status. |
 | `lib.emacsMajor`, `lib.emacsPackage { system; gui; }`, `lib.emacsWarm { system; }` | The same values for code evaluated outside the module (a status command). |
 
-The module installs into the existing Home Manager profile and retires symlinks
-from an earlier standalone install so they cannot shadow its selected build.
-It never deploys or relocates init files. A downstream flake uses this module and adds
+`lib.mkDarwin`/`lib.mkHome` already import the module (`emacs = "gui" | "nox" |
+"none"` sets its defaults); a downstream flake that imports it again is
+deduplicated, and its own `enable`/`gui` win over those defaults. The module
+never deploys or relocates init files. A downstream flake uses this module and adds
 its own configuration on top.
 
-For testing an unpublished checkout, use `nix run path:.#emacs` (the `path:`
-form includes new, untracked module files).
+For testing an unpublished checkout, use `nix run path:.` (the `path:` form
+includes new, untracked files).
 
 ## Target user is a runtime parameter
 
@@ -179,6 +159,8 @@ flake.nix                       # inputs + module apps (the CLI surface)
 darwin/default.nix              # nix-darwin system config (homebrew casks, ...)
 home/darwin.nix                 # home-manager (karabiner rule activation)
 home/linux.nix                  # home-manager (linux)
+home/emacs/default.nix          # opt-in Emacs module (both OSes)
+lib/emacs.nix                   # Emacs contract: major, package, warmer, app takeover
 home/karabiner/*.json           # Karabiner rules
 lib/karabiner-upsert.nix        # shared jq upsert (app + home-manager activation)
 ```

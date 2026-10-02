@@ -45,7 +45,7 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - run: nix flake check --all-systems --no-build
       - name: Emacs selection and module checks
-        run: nix build ".#checks.$(nix eval --impure --raw --expr builtins.currentSystem).emacs-setup"
+        run: nix build ".#checks.$(nix eval --impure --raw --expr builtins.currentSystem).emacs"
       - if: runner.os == 'Linux'
         run: nix build .#homeConfigurations.fixture.activationPackage
       - if: runner.os == 'macOS'
