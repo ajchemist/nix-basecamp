@@ -249,9 +249,13 @@
 
           # Read-only status. Deliberately does NOT evaluate or build the
           # system closure, so `nix run .#plan` stays instant.
+          # --no-emacs: for a downstream flake that sets basecamp.emacs itself
+          # (the row shows the setup app's choice, which it does not use).
           plan = pkgs.writeShellApplication {
             name = "plan";
             text = ''
+              no_emacs=0
+              for a in "$@"; do [ "$a" = --no-emacs ] && no_emacs=1; done
               row() { printf '  [%s] %-15s %-46s %s\n' "$@"; }
               echo ""
               echo "nix-basecamp · $(uname -s) ($(uname -m)) · target user: $(id -un)"
@@ -276,7 +280,9 @@
               else
                 row "•" karabiner-rule "Korean-mode left modifiers -> karabiner.json" "via nix-darwin switch"
               fi
-              ${emacsPlanRow}
+              if [ "$no_emacs" = 0 ]; then
+                ${emacsPlanRow}
+              fi
               echo ""
             '';
           };
