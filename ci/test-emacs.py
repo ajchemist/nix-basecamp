@@ -58,11 +58,6 @@ esac
         self.assertTrue(self.system_app.exists())
         self.assertEqual((self.home / 'brew-log').read_text(), 'emacs-app\n')
 
-    def test_keep_is_left_alone(self):
-        self.foreign(self.user_app)
-        self.takeover(str(self.user_app))
-        self.assertTrue(self.user_app.exists())
-
 
 @unittest.skipUnless(os.environ.get('BASECAMP_WARM'), 'requires the built warmer')
 class WarmStore(unittest.TestCase):

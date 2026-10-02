@@ -29,11 +29,11 @@
       # contains no personal usernames. The `fixture` configurations below
       # exist only so CI and `nix flake check` have a pure, neutral instance.
       # Emacs is opt-in per machine: emacs = "gui" | "nox" | "none" (the apps
-      # pass the saved choice). The module is always imported and only
-      # defaulted here, so a downstream flake that sets basecamp.emacs.* itself
-      # wins without passing anything.
-      emacsHome = mode: {
-        imports = [ ./home/emacs ];
+      # pass the saved choice). One install path per OS (docs/adr/0001): the
+      # nix-darwin module on macOS (Home Manager only mirrors it), the Home
+      # Manager module on Linux. Only defaulted here, so a downstream that sets
+      # basecamp.emacs.* itself wins without passing anything.
+      emacsChoiceModule = mode: {
         basecamp.emacs.enable = lib.mkDefault (mode != "none");
         basecamp.emacs.gui = lib.mkDefault (mode == "gui");
       };
@@ -42,6 +42,8 @@
         nix-darwin.lib.darwinSystem {
           modules = [
             ./darwin/default.nix
+            ./darwin/emacs.nix
+            (emacsChoiceModule emacs)
             home-manager.darwinModules.home-manager
             {
               nixpkgs.hostPlatform = system;
@@ -49,7 +51,7 @@
               users.users.${user}.home = "/Users/${user}";
               home-manager.useGlobalPkgs = true;
               home-manager.useUserPackages = true;
-              home-manager.users.${user}.imports = [ ./home/darwin.nix (emacsHome emacs) ];
+              home-manager.users.${user}.imports = [ ./home/darwin.nix ./home/emacs ];
             }
           ] ++ modules;
         };
@@ -59,7 +61,8 @@
           pkgs = nixpkgs.legacyPackages.${system};
           modules = [
             ./home/linux.nix
-            (emacsHome emacs)
+            ./home/emacs
+            (emacsChoiceModule emacs)
             {
               home.username = user;
               home.homeDirectory = homeDirectory;
@@ -98,10 +101,10 @@
           printf '%s\n' "$emacs" >"$choice.tmp" && mv "$choice.tmp" "$choice"
         fi
       '';
-      emacsPlanRow = ''
+      emacsPlanRow = layer: ''
         e="$(cat "$HOME/.config/nix-basecamp/emacs" 2>/dev/null || true)"
         case "$e" in
-          gui|nox) row "✓" emacs "Emacs ${emacs.major} ($e, home-manager)" "converge on switch" ;;
+          gui|nox) row "✓" emacs "Emacs ${emacs.major} ($e, ${layer})" "converge on switch" ;;
           none) row "✓" emacs "Emacs (opt-in)" "off · --emacs=gui|nox to enable" ;;
           *) row "•" emacs "Emacs (opt-in)" "undecided · asked on setup, or --emacs=gui|nox|none" ;;
         esac
@@ -130,8 +133,9 @@
           emacs.package { pkgs = nixpkgs.legacyPackages.${system}; inherit gui; };
         emacsWarm = { system }: emacs.warm nixpkgs.legacyPackages.${system};
       };
-      # A path, not an imported function: the builders above import it too, and
+      # Paths, not imported functions: the builders above import them too, and
       # the module system dedups a path imported twice.
+      darwinModules.emacs = ./darwin/emacs.nix;
       homeModules.emacs = ./home/emacs;
 
       darwinConfigurations.fixture = mkDarwin { user = "fixture"; };
@@ -152,19 +156,28 @@
           gui = fixture { basecamp.emacs = { enable = true; gui = true; }; };
           nox = fixture { basecamp.emacs = { enable = true; gui = false; }; };
           warm = emacs.warm pkgs;
-          # The builders' choice argument, and a downstream that imports the
-          # module again (dedup) and sets the options itself (wins).
-          hmOf = c: c.config.home-manager.users.fixture.basecamp.emacs;
-          chosen = hmOf (mkDarwin { user = "fixture"; emacs = "gui"; });
-          off = hmOf (mkDarwin { user = "fixture"; });
-          downstream = hmOf (mkDarwin { user = "fixture"; modules = [ {
-            home-manager.users.fixture = { imports = [ self.homeModules.emacs ]; basecamp.emacs = { enable = true; gui = false; }; };
-          } ]; });
+          # macOS: the system installs, Home Manager mirrors read-only and
+          # installs nothing; a downstream's own setting wins over the choice.
+          darwinOf = args: (mkDarwin ({ user = "fixture"; } // args)).config;
+          chosen = darwinOf { emacs = "gui"; };
+          chosenHm = chosen.home-manager.users.fixture;
+          off = darwinOf { };
+          downstream = darwinOf { emacs = "gui"; modules = [ { basecamp.emacs = { enable = true; gui = false; }; } ]; };
+          isEmacs = p: (p.pname or "") == "emacs";
+          # Linux builder: the choice reaches the Home Manager module.
+          linuxChosen = (mkHome { user = "fixture"; emacs = "nox"; }).config.basecamp.emacs;
         in {
           emacs =
-            assert chosen.enable && chosen.gui;
-            assert !off.enable;
-            assert downstream.enable && !downstream.gui;
+            assert chosen.basecamp.emacs.enable && chosen.basecamp.emacs.gui;
+            assert lib.any isEmacs chosen.environment.systemPackages;
+            assert lib.hasInfix "emacs-app-takeover" chosen.system.activationScripts.postActivation.text;
+            assert lib.hasInfix "eln-warm-store start" chosen.system.activationScripts.postActivation.text;
+            assert chosenHm.basecamp.emacs.package == chosen.basecamp.emacs.package;
+            assert !(lib.any isEmacs chosenHm.home.packages);
+            assert !off.basecamp.emacs.enable && !(lib.any isEmacs off.environment.systemPackages);
+            assert downstream.basecamp.emacs.enable && !downstream.basecamp.emacs.gui;
+            assert !(lib.hasInfix "emacs-app-takeover" downstream.system.activationScripts.postActivation.text);
+            assert linuxChosen.enable && !linuxChosen.gui;
             assert !disabled.basecamp.emacs.enable;
             assert !(lib.elem pkgs.emacs disabled.home.packages);
             assert gui.basecamp.emacs.package == pkgs.${"emacs" + emacs.major};
@@ -281,7 +294,7 @@
                 row "•" karabiner-rule "Korean-mode left modifiers -> karabiner.json" "via nix-darwin switch"
               fi
               if [ "$no_emacs" = 0 ]; then
-                ${emacsPlanRow}
+                ${emacsPlanRow "nix-darwin, /Applications/Nix Apps"}
               fi
               echo ""
             '';
@@ -386,7 +399,7 @@
               echo "nix-basecamp · $(uname -s) ($(uname -m)) · target user: $(id -un)"
               echo ""
               row "•" home-manager "standalone home-manager" "activate new generation"
-              ${emacsPlanRow}
+              ${emacsPlanRow "home-manager"}
               echo "emacs for this run: $emacs"
               if [ "$dry_run" = 1 ]; then
                 echo "(dry run — nothing was changed)"

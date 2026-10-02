@@ -1,7 +1,8 @@
-# Basecamp's Emacs contract, shared by the standalone app, the Home Manager
-# module and downstream flakes (through `lib` and the module's read-only
-# options). Downstream follows these; it never names an emacs attribute, a
-# warmer or a marker path of its own.
+# Basecamp's Emacs contract (docs/adr/0001-emacs-install-layers.md), shared by
+# the nix-darwin module (macOS), the Home Manager module (Linux; a read-only
+# mirror on macOS) and downstream flakes (through `lib` and the modules'
+# read-only options). Downstream follows these; it never names an emacs
+# attribute, a warmer or a marker path of its own.
 { lib }:
 rec {
   # The one knob. Inside a major every nixpkgs bump (31.1 -> 31.2, rebuilds)
@@ -30,6 +31,47 @@ rec {
       --replace-fail @eln_warm@ $out/bin/eln-warm
     chmod +x $out/bin/eln-warm-store
   '';
+
+  # The option set both modules declare. `from` is the system's
+  # basecamp.emacs when the Home Manager module runs under nix-darwin: there
+  # every option mirrors it read-only (the system installs, the user side only
+  # reads), so a downstream sets enable/gui in exactly one place per OS.
+  options = { pkgs, cfg, from ? null }:
+    let
+      ro = from != null;
+      pick = name: fallback: if ro then from.${name} else fallback;
+    in {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = pick "enable" false;
+        readOnly = ro;
+        description = "Install basecamp's Emacs (opt-in).";
+      };
+      gui = lib.mkOption {
+        type = lib.types.bool;
+        default = pick "gui" pkgs.stdenv.hostPlatform.isDarwin;
+        readOnly = ro;
+        description = "The GUI build instead of emacs-nox.";
+      };
+      major = lib.mkOption {
+        type = lib.types.str;
+        readOnly = true;
+        default = major;
+        description = "The Emacs major basecamp pins; downstream follows it.";
+      };
+      package = lib.mkOption {
+        type = lib.types.package;
+        readOnly = true;
+        default = pick "package" (package { inherit pkgs; inherit (cfg) gui; });
+        description = "The Emacs package (emacs<major> or emacs<major>-nox); downstream compiles against this one.";
+      };
+      warmProgram = lib.mkOption {
+        type = lib.types.package;
+        readOnly = true;
+        default = pick "warmProgram" (warm pkgs);
+        description = "macOS native Lisp warmer: bin/eln-warm DIR... and bin/eln-warm-store start|status EMACS.";
+      };
+    };
 
   # Nix's Emacs.app is the only one: when the GUI build is set up, other
   # bundles named Emacs.app in /Applications and ~/Applications are displaced.
