@@ -130,6 +130,7 @@ Downstream Home Manager configurations import the module and set only
 | `basecamp.emacs.package` (read-only) | The only Emacs: compile init files against it, never name an `emacs*` attribute. |
 | `basecamp.emacs.warmProgram` (read-only) | `bin/eln-warm DIR...` for any `.eln` it produces (init files, packages); `bin/eln-warm-store status EMACS` for status. |
 | `lib.emacsMajor`, `lib.emacsPackage { system; gui; }`, `lib.emacsWarm { system; }` | The same values for code evaluated outside the module (a status command). |
+| `apps.<system>.plan` with `--no-emacs` | Embedding basecamp's plan without its Emacs row, which shows the setup app's choice rather than the downstream's settings. |
 
 `lib.mkDarwin`/`lib.mkHome` already import the module (`emacs = "gui" | "nox" |
 "none"` sets its defaults); a downstream flake that imports it again is
