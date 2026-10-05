@@ -102,6 +102,10 @@ meanwhile), with a small C program (libSystem only; no perl or python on the
 host). A second run while one is going is a no-op; a run
 cut short by a reboot restarts on the next setup.
 
+Linux has no such check, so nothing is warmed there (`warmProgram` exists on
+both for evaluation, but only macOS calls it). CI times the whole warm-up on a
+GitHub macOS runner (`eln-warm-measure`, weekly and on demand).
+
 ### Version policy
 
 Basecamp pins the Emacs **major** (`lib/emacs.nix`, currently 31:
@@ -131,7 +135,7 @@ options on both OSes.
 | `darwinModules.emacs`, `homeModules.emacs` | Already imported by the builders; importing them again is deduplicated. |
 | `basecamp.emacs.major` (read-only) | Labels; never pins its own Emacs. |
 | `basecamp.emacs.package` (read-only) | The only Emacs: compile init files against it, never name an `emacs*` attribute. |
-| `basecamp.emacs.warmProgram` (read-only) | `bin/eln-warm DIR...` for any `.eln` it produces (init files, packages); `bin/eln-warm-store status EMACS` for status. |
+| `basecamp.emacs.warmProgram` (read-only) | macOS only: `bin/eln-warm DIR...` for any `.eln` it produces (init files, packages); `bin/eln-warm-store status EMACS` for status. Never called on Linux, where nothing vets `.eln`. |
 | `lib.emacsMajor`, `lib.emacsPackage { system; gui; }`, `lib.emacsWarm { system; }` | The same values for code evaluated outside the module (a status command). |
 | `apps.<system>.plan` with `--no-emacs` | Embedding basecamp's plan without its Emacs row, which shows the setup app's choice rather than the downstream's settings. |
 

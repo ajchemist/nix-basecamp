@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 1" # weekly: nixpkgs and the runner images move
 
 jobs:
   flake-check:
@@ -62,3 +64,18 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - name: Build home-manager activation package (fixture user)
         run: nix build .#homeConfigurations.fixture.activationPackage
+
+  # Lab measurement, macOS only (the vetting it pays for does not exist on
+  # Linux): the background warm-up of Emacs's built-in .eln, timed to the end.
+  # Long (~15 min of waiting), so not on every push.
+  eln-warm-measure:
+    if: github.event_name != 'push' && github.event_name != 'pull_request'
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - name: Apply the setup with a GUI Emacs
+        run: nix run . -- --yes --emacs=gui
+      - name: Measure the warm-up
+        run: ./ci/measure-eln-warm.sh
