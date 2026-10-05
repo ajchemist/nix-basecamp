@@ -1,6 +1,7 @@
 /* dlopen every .eln below the given directories, once, so macOS's
    first-load check is paid here instead of inside Emacs. Errors are
    ignored: a file that fails to load is one Emacs would not load either. */
+#define _XOPEN_SOURCE 700 /* nftw, FTW_PHYS on glibc; macOS has them anyway */
 #include <dlfcn.h>
 #include <ftw.h>
 #include <string.h>

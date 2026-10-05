@@ -103,8 +103,12 @@ host). A second run while one is going is a no-op; a run
 cut short by a reboot restarts on the next setup.
 
 Linux has no such check, so nothing is warmed there (`warmProgram` exists on
-both for evaluation, but only macOS calls it). CI times the whole warm-up on a
-GitHub macOS runner (`eln-warm-measure`, weekly and on demand).
+both for evaluation, but only macOS calls it). GitHub's macOS runners do not
+perform this check: CI's `eln-warm-measure` job (weekly and on demand) sees a
+fresh `.eln` open in ~0.001 s and all 3137 built-in ones warmed in ~20 s. On
+an ordinary Apple Silicon Mac the first open costs ~0.4 s per file and the
+warm-up takes ~15 min, so the job checks that the warm-up runs and finishes,
+not what it saves.
 
 ### Version policy
 
