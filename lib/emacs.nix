@@ -12,8 +12,11 @@ rec {
   # the next major, is the only reason to touch this file.
   major = "31";
 
-  package = { pkgs, gui ? false }:
-    pkgs.${"emacs" + major + lib.optionalString (!gui) "-nox"};
+  # nativeComp = false drops gcc and libgccjit (~430 MB of the closure) for
+  # sandboxes and images; that build is not in the binary cache.
+  package = { pkgs, gui ? false, nativeComp ? true }:
+    let p = pkgs.${"emacs" + major + lib.optionalString (!gui) "-nox"};
+    in if nativeComp then p else p.override { withNativeCompilation = false; };
 
   # macOS vets every Mach-O on its first dlopen (~0.3s each, serialised in
   # syspolicyd, then cached per file): the AOT eln in the store make that a
@@ -53,6 +56,12 @@ rec {
         readOnly = ro;
         description = "The GUI build instead of emacs-nox.";
       };
+      nativeComp = lib.mkOption {
+        type = lib.types.bool;
+        default = pick "nativeComp" true;
+        readOnly = ro;
+        description = "Native Lisp compilation; false for a lighter Emacs (sandboxes, images).";
+      };
       major = lib.mkOption {
         type = lib.types.str;
         readOnly = true;
@@ -62,7 +71,7 @@ rec {
       package = lib.mkOption {
         type = lib.types.package;
         readOnly = true;
-        default = pick "package" (package { inherit pkgs; inherit (cfg) gui; });
+        default = pick "package" (package { inherit pkgs; inherit (cfg) gui nativeComp; });
         description = "The Emacs package (emacs<major> or emacs<major>-nox); downstream compiles against this one.";
       };
       warmProgram = lib.mkOption {

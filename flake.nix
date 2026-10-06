@@ -129,8 +129,8 @@
       lib = {
         inherit mkDarwin mkHome;
         emacsMajor = emacs.major;
-        emacsPackage = { system, gui ? false }:
-          emacs.package { pkgs = nixpkgs.legacyPackages.${system}; inherit gui; };
+        emacsPackage = { system, gui ? false, nativeComp ? true }:
+          emacs.package { pkgs = nixpkgs.legacyPackages.${system}; inherit gui nativeComp; };
         emacsWarm = { system }: emacs.warm nixpkgs.legacyPackages.${system};
       };
       # Paths, not imported functions: the builders above import them too, and
@@ -155,6 +155,7 @@
           disabled = fixture { };
           gui = fixture { basecamp.emacs = { enable = true; gui = true; }; };
           nox = fixture { basecamp.emacs = { enable = true; gui = false; }; };
+          lean = fixture { basecamp.emacs = { enable = true; gui = false; nativeComp = false; }; };
           warm = emacs.warm pkgs;
           # macOS: the system installs, Home Manager mirrors read-only and
           # installs nothing; a downstream's own setting wins over the choice.
@@ -183,6 +184,7 @@
             assert gui.basecamp.emacs.package == pkgs.${"emacs" + emacs.major};
             assert nox.basecamp.emacs.package == pkgs.${"emacs" + emacs.major + "-nox"};
             assert lib.versions.major gui.basecamp.emacs.package.version == emacs.major;
+            assert lean.basecamp.emacs.package == pkgs.${"emacs" + emacs.major + "-nox"}.override { withNativeCompilation = false; };
             assert lib.all (name: !(lib.hasPrefix "emacs/" name)) (builtins.attrNames gui.xdg.configFile);
             assert lib.all (name: !(lib.hasPrefix "emacs/" name)) (builtins.attrNames nox.xdg.configFile);
             assert !(gui.home.file ? ".emacs");

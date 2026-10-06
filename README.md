@@ -132,6 +132,8 @@ options on both OSes.
 { basecamp.emacs = { enable = true; gui = true; }; }
 # Linux (Home Manager module list)
 { basecamp.emacs = { enable = true; gui = false; }; }
+# Sandboxes and images: no native compilation, so no gcc/libgccjit (~430 MB)
+{ basecamp.emacs = { enable = true; gui = false; nativeComp = false; }; }
 ```
 
 | Provided | What downstream does with it |
