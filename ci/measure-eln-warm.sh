@@ -14,7 +14,7 @@ d="$(mktemp -d)"; printf ';;; -*- lexical-binding: t -*-\n(defun probe () %s)\n'
 fresh_first="$(dl "$d/p.eln")"; fresh_second="$(dl "$d/p.eln")"
 
 t0=$SECONDS
-until [ "$(store_status)" = done ]; do
+until [ "$(store_status)" = "done" ]; do
   [ $((SECONDS - t0)) -gt 3000 ] && { echo "warm-up not done after 50 min: $(store_status)"; exit 1; }
   sleep 15
 done

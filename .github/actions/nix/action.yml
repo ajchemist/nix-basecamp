@@ -1,0 +1,17 @@
+name: Nix
+description: >-
+  Install Nix. When CI is called from flake-update, first put that run's
+  updated flake.lock in place so every job checks the new lock.
+inputs:
+  flake-lock-artifact:
+    description: Artifact holding an updated flake.lock ('' = the committed one).
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - if: inputs.flake-lock-artifact != ''
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.flake-lock-artifact }}
+    - uses: DeterminateSystems/nix-installer-action@main

@@ -207,6 +207,8 @@ docs/adr/                       # design decisions
 lib/emacs.nix                   # Emacs contract: major, package, warmer, app takeover
 home/karabiner/*.json           # Karabiner rules
 lib/karabiner-upsert.nix        # shared jq upsert (app + home-manager activation)
+ci/                             # CI test and assertion scripts
+.github/workflows/ci.yml        # lint | test -> build -> e2e, path-filtered
 ```
 
 ## Local iteration

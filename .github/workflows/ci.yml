@@ -1,80 +1,216 @@
 name: CI
 
+# Stages: lint | test -> build -> e2e, per platform. A push or PR runs only
+# what its changes can affect: docs-only changes start no workflow at all
+# (on.*.paths), and the `changes` job narrows further to the Linux and macOS
+# chains (dorny/paths-filter, so one file holds the whole pipeline and a
+# skipped job still reports as passed). Schedule, manual runs and calls from
+# flake-update run everything.
 on:
   push:
     branches: [main]
+    paths:
+      - "flake.nix"
+      - "flake.lock"
+      - "darwin/**"
+      - "home/**"
+      - "lib/**"
+      - "ci/**"
+      - ".github/workflows/**"
+      - ".github/actions/**"
   pull_request:
+    paths:
+      - "flake.nix"
+      - "flake.lock"
+      - "darwin/**"
+      - "home/**"
+      - "lib/**"
+      - "ci/**"
+      - ".github/workflows/**"
+      - ".github/actions/**"
   workflow_dispatch:
   schedule:
     - cron: "0 4 * * 1" # weekly: nixpkgs and the runner images move
+  workflow_call: # flake-update: the same pipeline against its updated lock
+    inputs:
+      flake-lock-artifact:
+        description: Artifact holding the flake.lock to test.
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: read # paths-filter reads a PR's changed files
 
 jobs:
-  flake-check:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      # Not a push or PR (filter skipped): everything runs.
+      lint: ${{ steps.filter.outputs.lint == 'true' || steps.filter.conclusion == 'skipped' }}
+      linux: ${{ steps.filter.outputs.linux == 'true' || steps.filter.conclusion == 'skipped' }}
+      darwin: ${{ steps.filter.outputs.darwin == 'true' || steps.filter.conclusion == 'skipped' }}
     steps:
       - uses: actions/checkout@v4
-      - uses: DeterminateSystems/nix-installer-action@main
-      - name: Evaluate all outputs
-        run: nix flake check --all-systems --no-build
-      - name: Emacs module checks
-        run: nix build ".#checks.$(nix eval --impure --raw --expr builtins.currentSystem).emacs"
+      - id: filter
+        if: inputs.flake-lock-artifact == '' && (github.event_name == 'push' || github.event_name == 'pull_request')
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            lint:
+              - ".github/**"
+              - "ci/**"
+              - "lib/**"
+              - "**/*.nix"
+            linux:
+              - "flake.nix"
+              - "flake.lock"
+              - "lib/**"
+              - "home/linux.nix"
+              - "home/emacs/**"
+              - "ci/test-emacs.py"
+              - ".github/workflows/ci.yml"
+              - ".github/actions/**"
+            darwin:
+              - "flake.nix"
+              - "flake.lock"
+              - "lib/**"
+              - "darwin/**"
+              - "home/**"
+              - "ci/**"
+              - ".github/workflows/ci.yml"
+              - ".github/actions/**"
 
-  darwin:
-    runs-on: macos-latest # arm64
-    steps:
-      - uses: actions/checkout@v4
-      - uses: DeterminateSystems/nix-installer-action@main
-      - name: Build full darwin system closure (fixture user)
-        run: nix build .#darwinConfigurations.fixture.system
-      - name: Run plan app (read-only)
-        run: nix run .#plan
-      - name: Default app dry-run
-        run: nix run . -- --dry-run
-      - name: Karabiner rule module (applies to runner HOME)
-        run: ./ci/test-karabiner-rule.sh
-
-  # Full end-to-end: the product one-liner, applied to the runner itself.
-  # The runner user is auto-detected at runtime; passwordless sudo activates
-  # nix-darwin for real.
-  darwin-activate:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: DeterminateSystems/nix-installer-action@main
-      - name: Apply full setup to the runner
-        run: nix run . -- --yes
-      - name: Assert system profile is active
-        run: |
-          readlink /run/current-system
-          /run/current-system/sw/bin/jq --version
-      - name: Assert karabiner rule deployed to runner HOME
-        run: |
-          jq -e '[.profiles[] | select(.selected == true)
-                  | .complex_modifications.rules[].description]
-                 | length >= 1' "$HOME/.config/karabiner/karabiner.json"
-
-  linux:
+  # ------------------------------------------------------------------- lint
+  lint:
+    needs: changes
+    if: needs.changes.outputs.lint == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: DeterminateSystems/nix-installer-action@main
-      - name: Build home-manager activation package (fixture user)
+      - uses: ./.github/actions/nix
+        with: { flake-lock-artifact: "${{ inputs.flake-lock-artifact }}" }
+      # Tools come from the flake's locked nixpkgs.
+      - name: actionlint (workflows, with shellcheck on run blocks)
+        run: nix shell --inputs-from . nixpkgs#actionlint nixpkgs#shellcheck -c actionlint
+      - name: shellcheck (ci/, lib/)
+        run: nix run --inputs-from . nixpkgs#shellcheck -- ci/*.sh lib/*.sh
+      - name: deadnix
+        run: nix run --inputs-from . nixpkgs#deadnix -- --fail .
+
+  # ------------------------------------------------------------------ Linux
+  test-linux:
+    needs: changes
+    if: needs.changes.outputs.linux == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/nix
+        with: { flake-lock-artifact: "${{ inputs.flake-lock-artifact }}" }
+      - name: Evaluate all outputs, all systems
+        run: nix flake check --all-systems --no-build
+      - name: Build this system's checks (emacs, karabiner)
+        run: nix flake check
+
+  build-linux:
+    needs: test-linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/nix
+        with: { flake-lock-artifact: "${{ inputs.flake-lock-artifact }}" }
+      - name: Home Manager activation package (fixture user)
         run: nix build .#homeConfigurations.fixture.activationPackage
+
+  # ------------------------------------------------------------------ macOS
+  test-darwin:
+    needs: changes
+    if: needs.changes.outputs.darwin == 'true'
+    runs-on: macos-latest # arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/nix
+        with: { flake-lock-artifact: "${{ inputs.flake-lock-artifact }}" }
+      - name: Evaluate all outputs, all systems
+        run: nix flake check --all-systems --no-build
+      - name: Build this system's checks (emacs, karabiner)
+        run: nix flake check
+      - name: Karabiner rule app (applies to runner HOME)
+        run: ./ci/test-karabiner-rule.sh
+
+  build-darwin:
+    needs: test-darwin
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/nix
+        with: { flake-lock-artifact: "${{ inputs.flake-lock-artifact }}" }
+      - name: System closure (fixture user)
+        run: nix build .#darwinConfigurations.fixture.system
+      - name: System closure, Karabiner off (fixture user)
+        run: nix build .#darwinConfigurations.fixture-no-karabiner.system
+      - name: Plan app (read-only)
+        run: nix run .#plan
+      - name: Default app dry-run
+        run: nix run . -- --dry-run
+      - name: Default app dry-run, Karabiner off
+        run: |
+          nix run . -- --dry-run --karabiner=off | tee "$RUNNER_TEMP/dry-run.txt"
+          grep -q "karabiner for this run: off" "$RUNNER_TEMP/dry-run.txt"
+
+  # The product one-liner, applied to the runner itself (user detected at
+  # runtime; passwordless sudo activates nix-darwin for real).
+  e2e-darwin:
+    needs: build-darwin
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/nix
+        with: { flake-lock-artifact: "${{ inputs.flake-lock-artifact }}" }
+      - name: Apply the full setup
+        run: nix run . -- --yes
+      - name: System profile is active
+        run: |
+          readlink /run/current-system
+          /run/current-system/sw/bin/jq --version
+      - name: Karabiner managed (cask, rule, plan)
+        run: ./ci/assert-karabiner.sh on
+
+  e2e-darwin-no-karabiner:
+    needs: build-darwin
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/nix
+        with: { flake-lock-artifact: "${{ inputs.flake-lock-artifact }}" }
+      - name: Runner starts without karabiner.json
+        run: test ! -e "$HOME/.config/karabiner/karabiner.json"
+      - name: Apply the full setup with Karabiner off
+        run: nix run . -- --yes --karabiner=off
+      - name: System profile is active
+        run: readlink /run/current-system
+      - name: Karabiner left alone (no cask, no karabiner.json, plan off)
+        run: ./ci/assert-karabiner.sh off
+      - name: A later --yes run and the rule app keep it off and leave an existing karabiner.json alone
+        run: |
+          mkdir -p "$HOME/.config/karabiner"
+          echo '{"profiles": [{"name": "Mine", "selected": true}]}' > "$HOME/.config/karabiner/karabiner.json"
+          cp "$HOME/.config/karabiner/karabiner.json" "$RUNNER_TEMP/karabiner.json"
+          nix run . -- --yes
+          nix run .#karabiner-rule
+          KARABINER_SNAPSHOT="$RUNNER_TEMP/karabiner.json" ./ci/assert-karabiner.sh off
 
   # Lab measurement, macOS only (the vetting it pays for does not exist on
   # Linux): the background warm-up of Emacs's built-in .eln, timed to the end.
-  # Long (~15 min of waiting), so not on every push.
+  # Long (~15 min of waiting): weekly and on demand, not on push, PR or
+  # flake-update.
   eln-warm-measure:
-    if: github.event_name != 'push' && github.event_name != 'pull_request'
+    if: inputs.flake-lock-artifact == '' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: ./.github/actions/nix
       - name: Apply the setup with a GUI Emacs
         run: nix run . -- --yes --emacs=gui
       - name: Measure the warm-up

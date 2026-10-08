@@ -1,4 +1,5 @@
 # bash emacs-app-takeover.sh
+# shellcheck shell=bash
 # Nix's Emacs.app becomes the only one. Homebrew casks that install an
 # Emacs.app are uninstalled through brew (moving their bundle would leave brew
 # inconsistent); any other Emacs.app in /Applications or ~/Applications is

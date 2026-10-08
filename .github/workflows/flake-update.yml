@@ -29,37 +29,13 @@ jobs:
         if: steps.diff.outputs.changed == 'true'
         with: { name: flake.lock, path: flake.lock }
 
-  # The same checks as ci.yml, run against the updated lock.
+  # The whole CI pipeline (ci.yml), run against the updated lock.
   check:
     needs: update
     if: needs.update.outputs.changed == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with: { name: flake.lock }
-      - uses: DeterminateSystems/nix-installer-action@main
-      - run: nix flake check --all-systems --no-build
-      - name: Emacs selection and module checks
-        run: nix build ".#checks.$(nix eval --impure --raw --expr builtins.currentSystem).emacs"
-      - if: runner.os == 'Linux'
-        run: nix build .#homeConfigurations.fixture.activationPackage
-      - if: runner.os == 'macOS'
-        run: |
-          nix build .#darwinConfigurations.fixture.system
-          nix run .#plan
-          nix run . -- --dry-run
-          ./ci/test-karabiner-rule.sh
-          nix run . -- --yes
-          readlink /run/current-system
-          /run/current-system/sw/bin/jq --version
-          jq -e '[.profiles[] | select(.selected == true)
-                  | .complex_modifications.rules[].description]
-                 | length >= 1' "$HOME/.config/karabiner/karabiner.json"
+    uses: ./.github/workflows/ci.yml
+    with:
+      flake-lock-artifact: flake.lock
 
   land:
     needs: [update, check]
