@@ -40,7 +40,7 @@ Apply everything, or a single module:
 ```sh
 nix run github:ajchemist/nix-basecamp                  # plan -> confirm -> apply all
 nix run github:ajchemist/nix-basecamp -- --yes         # no prompt
-nix run github:ajchemist/nix-basecamp#karabiner-rule   # just the karabiner rule
+nix run github:ajchemist/nix-basecamp#karabiner-rule   # just the karabiner rule (no-op when Karabiner is off)
 nix run github:ajchemist/nix-basecamp#darwin           # just nix-darwin activation
 nix run github:ajchemist/nix-basecamp#homebrew         # just homebrew
 ```
@@ -64,7 +64,29 @@ Proceed? [y/N]
   (Karabiner-Elements), and Karabiner complex-modification rules upserted into
   the selected profile of `~/.config/karabiner/karabiner.json`
   (idempotent jq merge — safe against an existing, hand-edited config).
+  Karabiner is on by default and can be turned off (below).
 - **Linux** (x86_64): standalone home-manager.
+
+## Karabiner (macOS, on by default)
+
+Karabiner-Elements and its rule are managed unless you turn them off:
+
+```sh
+nix run github:ajchemist/nix-basecamp -- --karabiner=off   # or =on
+nix run github:ajchemist/nix-basecamp -- --dry-run --karabiner=off
+```
+
+Off means basecamp does not install the cask, never runs the rule upsert, and
+never touches `karabiner.json`; the plan shows both Karabiner rows as `off`.
+The choice is saved in `~/.config/nix-basecamp/karabiner` after a successful
+switch and reused by later runs, `#darwin` and `#karabiner-rule`. It is never
+asked, and `--yes` never changes it.
+
+Turning it off only stops managing Karabiner: an already installed
+Karabiner-Elements stays installed (nix-darwin's Homebrew cleanup is left at
+its default, `none`) and an existing `karabiner.json`, including basecamp's
+rule, is left as it is. Remove them by hand (`brew uninstall --cask
+karabiner-elements`) if you want them gone.
 
 ## Optional Emacs
 
@@ -121,8 +143,9 @@ message).
 ### Contract for downstream flakes
 
 A downstream built on `lib.mkDarwin` / `lib.mkHome` gets both modules already
-imported. It sets only `enable` and `gui`, where the install happens: in the
-nix-darwin configuration on macOS, in Home Manager on Linux. Everything else
+imported. It sets only `enable`, `gui` and `nativeComp`, where the install
+happens: in the nix-darwin configuration on macOS, in Home Manager on Linux
+(and, on macOS, `basecamp.karabiner.enable`). Everything else
 is read-only and must be used as given; under nix-darwin the Home Manager
 module mirrors the system's values read-only, so the home side reads the same
 options on both OSes.
@@ -134,6 +157,8 @@ options on both OSes.
 { basecamp.emacs = { enable = true; gui = false; }; }
 # Sandboxes and images: no native compilation, so no gcc/libgccjit (~430 MB)
 { basecamp.emacs = { enable = true; gui = false; nativeComp = false; }; }
+# macOS without Karabiner (nix-darwin module list)
+{ basecamp.karabiner.enable = false; }
 ```
 
 | Provided | What downstream does with it |
@@ -144,9 +169,12 @@ options on both OSes.
 | `basecamp.emacs.warmProgram` (read-only) | macOS only: `bin/eln-warm DIR...` for any `.eln` it produces (init files, packages); `bin/eln-warm-store status EMACS` for status. Never called on Linux, where nothing vets `.eln`. |
 | `lib.emacsMajor`, `lib.emacsPackage { system; gui; }`, `lib.emacsWarm { system; }` | The same values for code evaluated outside the module (a status command). |
 | `apps.<system>.plan` with `--no-emacs` | Embedding basecamp's plan without its Emacs row, which shows the setup app's choice rather than the downstream's settings. |
+| `basecamp.karabiner.enable` (nix-darwin, default `true`) | Set `false` to drop the Karabiner-Elements cask and the rule upsert; Karabiner is then left unmanaged, not uninstalled. |
+| `apps.aarch64-darwin.plan` with `--no-karabiner` | Embedding basecamp's plan without its Karabiner rows, for a downstream that sets `basecamp.karabiner.enable` itself. |
 
 `lib.mkDarwin`/`lib.mkHome` take `emacs = "gui" | "nox" | "none"` as defaults
-for `enable`/`gui`; a downstream's own settings win. Neither module deploys or
+for `enable`/`gui`, and `lib.mkDarwin` takes `karabiner = "on" | "off"` as the
+default for `basecamp.karabiner.enable`; a downstream's own settings win. Neither module deploys or
 relocates init files. A downstream flake uses these modules and adds
 its own configuration on top.
 
@@ -158,7 +186,7 @@ includes new, untracked files).
 The repo contains no personal usernames. The apps detect the invoking user
 (`id -un`) at runtime and evaluate `lib.mkDarwin { user = ...; }` /
 `lib.mkHome { user = ...; }` impurely, so the same command works for any
-account on any machine. The pure `darwinConfigurations.fixture` /
+account on any machine. The pure `darwinConfigurations.fixture` (and `fixture-no-karabiner`) /
 `homeConfigurations.fixture` outputs exist only for CI and `nix flake check`.
 
 Activation registers the built system closure directly
@@ -169,8 +197,9 @@ there is no PATH/sudo juggling.
 
 ```
 flake.nix                       # inputs + module apps (the CLI surface)
-darwin/default.nix              # nix-darwin system config (homebrew casks, ...)
-home/darwin.nix                 # home-manager (karabiner rule activation)
+darwin/default.nix              # nix-darwin system config (homebrew, ...)
+darwin/karabiner.nix            # basecamp.karabiner.enable: cask + rule (on by default)
+home/darwin.nix                 # home-manager (karabiner rule activation, if enabled)
 home/linux.nix                  # home-manager (linux)
 darwin/emacs.nix                # opt-in Emacs, macOS: system package, warm-up, Emacs.app takeover
 home/emacs/default.nix          # opt-in Emacs, Linux install; read-only mirror under nix-darwin

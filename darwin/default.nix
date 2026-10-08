@@ -10,12 +10,8 @@
     jq
   ];
 
-  homebrew = {
-    enable = true;
-    casks = [
-      "karabiner-elements"
-    ];
-  };
+  # Casks come from the modules that want them (darwin/karabiner.nix).
+  homebrew.enable = true;
 
   programs.zsh.enable = true;
 

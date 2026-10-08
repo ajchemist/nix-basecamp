@@ -37,13 +37,21 @@
         basecamp.emacs.enable = lib.mkDefault (mode != "none");
         basecamp.emacs.gui = lib.mkDefault (mode == "gui");
       };
+      # Karabiner is on by default: karabiner = "on" | "off" (the apps pass
+      # the saved choice). Only defaulted, so a downstream's own
+      # basecamp.karabiner.enable wins.
+      karabinerChoiceModule = mode: {
+        basecamp.karabiner.enable = lib.mkDefault (mode != "off");
+      };
 
-      mkDarwin = { user, system ? "aarch64-darwin", emacs ? "none", modules ? [ ] }:
+      mkDarwin = { user, system ? "aarch64-darwin", emacs ? "none", karabiner ? "on", modules ? [ ] }:
         nix-darwin.lib.darwinSystem {
           modules = [
             ./darwin/default.nix
             ./darwin/emacs.nix
+            ./darwin/karabiner.nix
             (emacsChoiceModule emacs)
+            (karabinerChoiceModule karabiner)
             home-manager.darwinModules.home-manager
             {
               nixpkgs.hostPlatform = system;
@@ -116,6 +124,33 @@
         case "$emacs" in gui|nox|none) ;; *) echo "invalid Emacs choice: $emacs" >&2; exit 1 ;; esac
       '';
 
+      # The Karabiner choice (macOS): --karabiner=on|off in the setup app, else
+      # BASECAMP_KARABINER (the setup app exports it for its steps), else the
+      # saved one, else on. Never asked: it is on unless turned off. Saved,
+      # like the Emacs choice, only after a successful switch and only when
+      # given on the command line, so --yes never changes it.
+      karabinerSaved = ''
+        kchoice="$HOME/.config/nix-basecamp/karabiner"
+        karabiner="''${BASECAMP_KARABINER:-$(cat "$kchoice" 2>/dev/null || echo on)}"
+        case "$karabiner" in on|off) ;; *) echo "invalid Karabiner choice: $karabiner" >&2; exit 1 ;; esac
+      '';
+      karabinerChoice = karabinerSaved + ''
+        karabiner_new=0
+        for a in "$@"; do
+          case "$a" in
+            --karabiner=on|--karabiner=off) karabiner="''${a#--karabiner=}" karabiner_new=1 ;;
+            --karabiner=*) echo "expected --karabiner=on|off" >&2; exit 1 ;;
+          esac
+        done
+        export BASECAMP_KARABINER="$karabiner"
+      '';
+      karabinerSave = ''
+        if [ "$karabiner_new" = 1 ]; then
+          mkdir -p "''${kchoice%/*}"
+          printf '%s\n' "$karabiner" >"$kchoice.tmp" && mv "$kchoice.tmp" "$kchoice"
+        fi
+      '';
+
       mkApp = desc: drv: {
         type = "app";
         program = lib.getExe drv;
@@ -139,6 +174,7 @@
       homeModules.emacs = ./home/emacs;
 
       darwinConfigurations.fixture = mkDarwin { user = "fixture"; };
+      darwinConfigurations.fixture-no-karabiner = mkDarwin { user = "fixture"; karabiner = "off"; };
       homeConfigurations.fixture = mkHome { user = "fixture"; };
 
       checks = lib.genAttrs [ "aarch64-darwin" "x86_64-linux" ] (system:
@@ -167,7 +203,33 @@
           isEmacs = p: (p.pname or "") == "emacs";
           # Linux builder: the choice reaches the Home Manager module.
           linuxChosen = (mkHome { user = "fixture"; emacs = "nox"; }).config.basecamp.emacs;
+          # Karabiner: on by default; off (setup choice or downstream) drops
+          # the cask and every activation step that touches karabiner.json.
+          kDefault = darwinOf { };
+          kOff = darwinOf { karabiner = "off"; };
+          kDownstream = darwinOf { modules = [ { basecamp.karabiner.enable = false; } ]; };
+          kDownstreamOn = darwinOf { karabiner = "off"; modules = [ { basecamp.karabiner.enable = true; } ]; };
+          casks = c: map (k: k.name) c.homebrew.casks;
+          hmSteps = c: lib.concatMapStrings (e: e.data) (builtins.attrValues c.home-manager.users.fixture.home.activation);
+          systemSteps = c: lib.concatMapStrings (e: e.text or "") (builtins.attrValues c.system.activationScripts);
+          managesKarabiner = c:
+            lib.elem "karabiner-elements" (casks c)
+            && c.home-manager.users.fixture.home.activation ? karabinerKoreanRule
+            && lib.hasInfix "karabiner.json" (hmSteps c);
+          leavesKarabiner = c:
+            !(lib.elem "karabiner-elements" (casks c))
+            && !(lib.hasInfix "karabiner" (hmSteps c))
+            && !(lib.hasInfix "karabiner" (systemSteps c))
+            && !(lib.hasInfix "karabiner" c.homebrew.brewfile);
         in {
+          karabiner =
+            assert kDefault.basecamp.karabiner.enable && managesKarabiner kDefault;
+            assert lib.hasInfix "karabiner-elements" kDefault.homebrew.brewfile;
+            assert !kOff.basecamp.karabiner.enable && leavesKarabiner kOff;
+            assert !kDownstream.basecamp.karabiner.enable && leavesKarabiner kDownstream;
+            assert kDownstreamOn.basecamp.karabiner.enable && managesKarabiner kDownstreamOn;
+            pkgs.runCommand "karabiner-checks" { } "touch $out";
+
           emacs =
             assert chosen.basecamp.emacs.enable && chosen.basecamp.emacs.gui;
             assert lib.any isEmacs chosen.environment.systemPackages;
@@ -210,7 +272,13 @@
             name = "karabiner-rule";
             # SC2016: single-quoted jq programs intentionally contain $vars
             excludeShellChecks = [ "SC2016" ];
-            text = import ./lib/karabiner-upsert.nix { inherit pkgs lib ruleFile; };
+            # Respects the Karabiner choice: off leaves karabiner.json alone.
+            text = karabinerSaved + ''
+              if [ "$karabiner" = off ]; then
+                echo "karabiner-rule: Karabiner is off (--karabiner=on to manage it); karabiner.json left alone"
+                exit 0
+              fi
+            '' + import ./lib/karabiner-upsert.nix { inherit pkgs lib ruleFile; };
           };
 
           homebrew = pkgs.writeShellApplication {
@@ -236,10 +304,11 @@
               fi
 
               ${emacsSaved}
-              echo "darwin: building system configuration for user $user (emacs: $emacs)"
+              ${karabinerSaved}
+              echo "darwin: building system configuration for user $user (emacs: $emacs, karabiner: $karabiner)"
               toplevel="$(${nixBin}/nix build --impure --no-link --print-out-paths \
                 --extra-experimental-features "nix-command flakes" \
-                --expr "((builtins.getFlake \"path:${self}\").lib.mkDarwin { user = \"$user\"; emacs = \"$emacs\"; }).system")"
+                --expr "((builtins.getFlake \"path:${self}\").lib.mkDarwin { user = \"$user\"; emacs = \"$emacs\"; karabiner = \"$karabiner\"; }).system")"
 
               current="$(readlink /run/current-system 2>/dev/null || true)"
               if [ "$current" = "$toplevel" ]; then
@@ -264,13 +333,20 @@
 
           # Read-only status. Deliberately does NOT evaluate or build the
           # system closure, so `nix run .#plan` stays instant.
-          # --no-emacs: for a downstream flake that sets basecamp.emacs itself
-          # (the row shows the setup app's choice, which it does not use).
+          # --no-emacs / --no-karabiner: for a downstream flake that sets
+          # basecamp.emacs / basecamp.karabiner itself (the rows show the
+          # setup app's choice, which it does not use).
           plan = pkgs.writeShellApplication {
             name = "plan";
             text = ''
-              no_emacs=0
-              for a in "$@"; do [ "$a" = --no-emacs ] && no_emacs=1; done
+              no_emacs=0 no_karabiner=0
+              for a in "$@"; do
+                case "$a" in
+                  --no-emacs) no_emacs=1 ;;
+                  --no-karabiner) no_karabiner=1 ;;
+                esac
+              done
+              ${karabinerSaved}
               row() { printf '  [%s] %-15s %-46s %s\n' "$@"; }
               echo ""
               echo "nix-basecamp · $(uname -s) ($(uname -m)) · target user: $(id -un)"
@@ -285,15 +361,22 @@
               else
                 row "•" nix-darwin "system profile" "activate new generation"
               fi
-              if [ -d /Applications/Karabiner-Elements.app ]; then
-                row "✓" karabiner "Karabiner-Elements (homebrew cask)" "converge on switch"
+              if [ "$no_karabiner" = 1 ]; then
+                :
+              elif [ "$karabiner" = off ]; then
+                row "✓" karabiner "Karabiner-Elements (homebrew cask)" "off · not managed · --karabiner=on to enable"
+                row "✓" karabiner-rule "Korean-mode left modifiers -> karabiner.json" "off · karabiner.json left alone"
               else
-                row "•" karabiner "Karabiner-Elements (homebrew cask)" "via nix-darwin switch"
-              fi
-              if grep -qF ${lib.escapeShellArg ruleDesc} "$HOME/.config/karabiner/karabiner.json" 2>/dev/null; then
-                row "✓" karabiner-rule "Korean-mode left modifiers -> karabiner.json" "converge on switch"
-              else
-                row "•" karabiner-rule "Korean-mode left modifiers -> karabiner.json" "via nix-darwin switch"
+                if [ -d /Applications/Karabiner-Elements.app ]; then
+                  row "✓" karabiner "Karabiner-Elements (homebrew cask)" "converge on switch"
+                else
+                  row "•" karabiner "Karabiner-Elements (homebrew cask)" "via nix-darwin switch"
+                fi
+                if grep -qF ${lib.escapeShellArg ruleDesc} "$HOME/.config/karabiner/karabiner.json" 2>/dev/null; then
+                  row "✓" karabiner-rule "Korean-mode left modifiers -> karabiner.json" "converge on switch"
+                else
+                  row "•" karabiner-rule "Korean-mode left modifiers -> karabiner.json" "via nix-darwin switch"
+                fi
               fi
               if [ "$no_emacs" = 0 ]; then
                 ${emacsPlanRow "nix-darwin, /Applications/Nix Apps"}
@@ -311,14 +394,16 @@
                 case "$a" in
                   -y|--yes) assume_yes=1 ;;
                   -n|--dry-run) dry_run=1 ;;
-                  --emacs=*) ;;
+                  --emacs=*|--karabiner=*) ;;
                   *) echo "unknown argument: $a" >&2; exit 1 ;;
                 esac
               done
               ${emacsChoice}
+              ${karabinerChoice}
 
               ${lib.getExe plan}
               echo "emacs for this run: $emacs"
+              echo "karabiner for this run: $karabiner"
               if [ "$dry_run" = 1 ]; then
                 echo "(dry run — nothing was changed)"
                 exit 0
@@ -341,9 +426,11 @@
               ${lib.getExe homebrew}
               BASECAMP_EMACS="$emacs" ${lib.getExe darwin}
               ${emacsSave}
+              ${karabinerSave}
               # The darwin step exits early when the system closure is already
               # current, but state outside the nix store (karabiner.json) can
-              # still have drifted — converge it unconditionally (idempotent).
+              # still have drifted — converge it unconditionally (idempotent;
+              # a no-op when Karabiner is off).
               ${lib.getExe karabiner-rule}
               echo ""
               echo "result:"
@@ -352,7 +439,7 @@
           };
         in
         {
-          default = mkApp "Plan, confirm, and apply the macOS setup (Emacs optional: --emacs=gui|nox|none)" bootstrap;
+          default = mkApp "Plan, confirm, and apply the macOS setup (Emacs optional: --emacs=gui|nox|none; Karabiner: --karabiner=on|off)" bootstrap;
           plan = mkApp "Show module status (read-only)" plan;
           homebrew = mkApp "Install Homebrew if missing" homebrew;
           darwin = mkApp "Build and activate the nix-darwin system for the invoking user" darwin;
