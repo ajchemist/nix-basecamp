@@ -3,6 +3,7 @@
 - Status: accepted
 - Date: 2026-10-16
 - Supersedes: [ADR 0001](0001-emacs-install-layers.md)
+- Amended by: [ADR 0003](0003-application-inputs.md) (applications take upstream inputs)
 
 ## Context
 

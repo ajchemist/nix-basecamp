@@ -91,16 +91,19 @@ karabiner-elements`) if you want them gone.
 ## Emacs moved to emacs-camp
 
 Basecamp no longer installs Emacs ([ADR 0002](docs/adr/0002-application-ownership.md)).
-[emacs-camp](https://github.com/ajchemist/emacs-camp) builds and installs it
-on top of these builders, along with its configuration. If an older basecamp
+[emacs-camp](https://github.com/ajchemist/emacs-camp) builds and installs it,
+along with its configuration; add its modules to these builders. If an older basecamp
 saved an Emacs choice (`~/.config/nix-basecamp/emacs` is `gui` or `nox`), the
 setup prints a notice: the next switch removes the Emacs basecamp installed.
 Delete the file once Emacs comes from emacs-camp.
 
 ## Contract for downstream flakes
 
-Applications (such as emacs-camp) and personal setups build on these.
-Changing one is a breaking change, recorded in an ADR.
+Personal setups build on these, adding application modules (emacs-camp,
+agent-camp) through `modules`. Applications do not depend on basecamp; point
+their `nixpkgs`, `home-manager` and `nix-darwin` inputs at basecamp's with
+`follows` so one lock pins them all ([ADR 0003](docs/adr/0003-application-inputs.md)).
+Changing anything below is a breaking change, recorded in an ADR.
 
 | Provided | What downstream does with it |
 |---|---|
