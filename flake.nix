@@ -19,7 +19,6 @@
   outputs = { self, nixpkgs, nix-darwin, home-manager, ... }:
     let
       lib = nixpkgs.lib;
-      emacs = import ./lib/emacs.nix { inherit lib; };
 
       ruleFile = ./home/karabiner/korean-left-modifiers.json;
       ruleDesc = (builtins.fromJSON (builtins.readFile ruleFile)).description;
@@ -28,15 +27,6 @@
       # user (`id -un`) and evaluate these builders impurely, so this repo
       # contains no personal usernames. The `fixture` configurations below
       # exist only so CI and `nix flake check` have a pure, neutral instance.
-      # Emacs is opt-in per machine: emacs = "gui" | "nox" | "none" (the apps
-      # pass the saved choice). One install path per OS (docs/adr/0001): the
-      # nix-darwin module on macOS (Home Manager only mirrors it), the Home
-      # Manager module on Linux. Only defaulted here, so a downstream that sets
-      # basecamp.emacs.* itself wins without passing anything.
-      emacsChoiceModule = mode: {
-        basecamp.emacs.enable = lib.mkDefault (mode != "none");
-        basecamp.emacs.gui = lib.mkDefault (mode == "gui");
-      };
       # Karabiner is on by default: karabiner = "on" | "off" (the apps pass
       # the saved choice). Only defaulted, so a downstream's own
       # basecamp.karabiner.enable wins.
@@ -44,13 +34,11 @@
         basecamp.karabiner.enable = lib.mkDefault (mode != "off");
       };
 
-      mkDarwin = { user, system ? "aarch64-darwin", emacs ? "none", karabiner ? "on", modules ? [ ] }:
+      mkDarwin = { user, system ? "aarch64-darwin", karabiner ? "on", modules ? [ ] }:
         nix-darwin.lib.darwinSystem {
           modules = [
             ./darwin/default.nix
-            ./darwin/emacs.nix
             ./darwin/karabiner.nix
-            (emacsChoiceModule emacs)
             (karabinerChoiceModule karabiner)
             home-manager.darwinModules.home-manager
             {
@@ -59,18 +47,16 @@
               users.users.${user}.home = "/Users/${user}";
               home-manager.useGlobalPkgs = true;
               home-manager.useUserPackages = true;
-              home-manager.users.${user}.imports = [ ./home/darwin.nix ./home/emacs ];
+              home-manager.users.${user}.imports = [ ./home/darwin.nix ];
             }
           ] ++ modules;
         };
 
-      mkHome = { user, homeDirectory ? "/home/${user}", system ? "x86_64-linux", emacs ? "none", modules ? [ ] }:
+      mkHome = { user, homeDirectory ? "/home/${user}", system ? "x86_64-linux", modules ? [ ] }:
         home-manager.lib.homeManagerConfiguration {
           pkgs = nixpkgs.legacyPackages.${system};
           modules = [
             ./home/linux.nix
-            ./home/emacs
-            (emacsChoiceModule emacs)
             {
               home.username = user;
               home.homeDirectory = homeDirectory;
@@ -78,57 +64,11 @@
           ] ++ modules;
         };
 
-      # The Emacs choice for the setup apps: --emacs=gui|nox|none, else the
-      # saved one, else asked once on a terminal (default none). Saved only
-      # after a successful switch, so --yes never opts in and a failed build
-      # records nothing. Expects $assume_yes/$dry_run; sets $emacs, $emacs_new.
-      emacsChoice = ''
-        choice="$HOME/.config/nix-basecamp/emacs"
-        emacs="" emacs_new=0
-        for a in "$@"; do
-          case "$a" in
-            --emacs=gui|--emacs=nox|--emacs=none) emacs="''${a#--emacs=}" emacs_new=1 ;;
-            --emacs=*) echo "expected --emacs=gui|nox|none" >&2; exit 1 ;;
-          esac
-        done
-        if [ -z "$emacs" ] && [ -f "$choice" ]; then
-          emacs="$(cat "$choice")"
-          case "$emacs" in gui|nox|none) ;; *) echo "invalid Emacs choice in $choice" >&2; exit 1 ;; esac
-        fi
-        if [ -z "$emacs" ] && [ "$dry_run" = 0 ] && [ "$assume_yes" = 0 ] && ( : </dev/tty ) 2>/dev/null; then
-          printf 'Optional Emacs: gui / nox / none [none]: ' >/dev/tty
-          read -r emacs </dev/tty || emacs=""
-          emacs="''${emacs:-none}"
-          case "$emacs" in gui|nox|none) emacs_new=1 ;; *) echo "expected gui, nox or none" >&2; exit 1 ;; esac
-        fi
-        emacs="''${emacs:-none}"
-      '';
-      emacsSave = ''
-        if [ "$emacs_new" = 1 ]; then
-          mkdir -p "''${choice%/*}"
-          printf '%s\n' "$emacs" >"$choice.tmp" && mv "$choice.tmp" "$choice"
-        fi
-      '';
-      emacsPlanRow = layer: ''
-        e="$(cat "$HOME/.config/nix-basecamp/emacs" 2>/dev/null || true)"
-        case "$e" in
-          gui|nox) row "✓" emacs "Emacs ${emacs.major} ($e, ${layer})" "converge on switch" ;;
-          none) row "✓" emacs "Emacs (opt-in)" "off · --emacs=gui|nox to enable" ;;
-          *) row "•" emacs "Emacs (opt-in)" "undecided · asked on setup, or --emacs=gui|nox|none" ;;
-        esac
-      '';
-      # For the single-step apps (#darwin, #home): the env from the setup app,
-      # else the saved choice, else none.
-      emacsSaved = ''
-        emacs="''${BASECAMP_EMACS:-$(cat "$HOME/.config/nix-basecamp/emacs" 2>/dev/null || echo none)}"
-        case "$emacs" in gui|nox|none) ;; *) echo "invalid Emacs choice: $emacs" >&2; exit 1 ;; esac
-      '';
-
       # The Karabiner choice (macOS): --karabiner=on|off in the setup app, else
       # BASECAMP_KARABINER (the setup app exports it for its steps), else the
-      # saved one, else on. Never asked: it is on unless turned off. Saved,
-      # like the Emacs choice, only after a successful switch and only when
-      # given on the command line, so --yes never changes it.
+      # saved one, else on. Never asked: it is on unless turned off. Saved
+      # only after a successful switch and only when given on the command
+      # line, so --yes never changes it.
       karabinerSaved = ''
         kchoice="$HOME/.config/nix-basecamp/karabiner"
         karabiner="''${BASECAMP_KARABINER:-$(cat "$kchoice" 2>/dev/null || echo on)}"
@@ -151,6 +91,17 @@
         fi
       '';
 
+      # Emacs moved to emacs-camp (docs/adr/0002). A gui/nox choice saved by an
+      # older basecamp no longer installs anything, and the next switch drops
+      # the Emacs it installed: say so rather than remove it silently.
+      emacsMoved = ''
+        case "$(cat "$HOME/.config/nix-basecamp/emacs" 2>/dev/null || true)" in
+          gui|nox)
+            echo "note: basecamp no longer installs Emacs (docs/adr/0002); this switch removes the one it installed." >&2
+            echo "      Install it with github:ajchemist/emacs-camp, then delete ~/.config/nix-basecamp/emacs." >&2 ;;
+        esac
+      '';
+
       mkApp = desc: drv: {
         type = "app";
         program = lib.getExe drv;
@@ -158,20 +109,7 @@
       };
     in
     {
-      # Basecamp's Emacs contract for flakes that evaluate outside the module
-      # (a downstream plan, the standalone app): the pinned major, the package,
-      # the warmer. Same values as the module's read-only options.
-      lib = {
-        inherit mkDarwin mkHome;
-        emacsMajor = emacs.major;
-        emacsPackage = { system, gui ? false, nativeComp ? true }:
-          emacs.package { pkgs = nixpkgs.legacyPackages.${system}; inherit gui nativeComp; };
-        emacsWarm = { system }: emacs.warm nixpkgs.legacyPackages.${system};
-      };
-      # Paths, not imported functions: the builders above import them too, and
-      # the module system dedups a path imported twice.
-      darwinModules.emacs = ./darwin/emacs.nix;
-      homeModules.emacs = ./home/emacs;
+      lib = { inherit mkDarwin mkHome; };
 
       darwinConfigurations.fixture = mkDarwin { user = "fixture"; };
       darwinConfigurations.fixture-no-karabiner = mkDarwin { user = "fixture"; karabiner = "off"; };
@@ -180,31 +118,7 @@
       checks = lib.genAttrs [ "aarch64-darwin" "x86_64-linux" ] (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          fixture = extra: (home-manager.lib.homeManagerConfiguration {
-            inherit pkgs;
-            modules = [ self.homeModules.emacs {
-              home.username = "fixture";
-              home.homeDirectory = "/tmp/basecamp-fixture";
-              home.stateVersion = "25.05";
-            } extra ];
-          }).config;
-          disabled = fixture { };
-          gui = fixture { basecamp.emacs = { enable = true; gui = true; }; };
-          nox = fixture { basecamp.emacs = { enable = true; gui = false; }; };
-          lean = fixture { basecamp.emacs = { enable = true; gui = false; nativeComp = false; }; };
-          warm = emacs.warm pkgs;
-          # macOS: the system installs, Home Manager mirrors read-only and
-          # installs nothing; a downstream's own setting wins over the choice.
           darwinOf = args: (mkDarwin ({ user = "fixture"; } // args)).config;
-          chosen = darwinOf { emacs = "gui"; };
-          chosenHm = chosen.home-manager.users.fixture;
-          off = darwinOf { };
-          downstream = darwinOf { emacs = "gui"; modules = [ { basecamp.emacs = { enable = true; gui = false; }; } ]; };
-          isEmacs = p: (p.pname or "") == "emacs";
-          # Linux builder: the choice reaches the Home Manager module.
-          linuxChosen = (mkHome { user = "fixture"; emacs = "nox"; }).config.basecamp.emacs;
-          # Karabiner: on by default; off (setup choice or downstream) drops
-          # the cask and every activation step that touches karabiner.json.
           kDefault = darwinOf { };
           kOff = darwinOf { karabiner = "off"; };
           kDownstream = darwinOf { modules = [ { basecamp.karabiner.enable = false; } ]; };
@@ -230,36 +144,6 @@
             assert kDownstreamOn.basecamp.karabiner.enable && managesKarabiner kDownstreamOn;
             pkgs.runCommand "karabiner-checks" { } "touch $out";
 
-          emacs =
-            assert chosen.basecamp.emacs.enable && chosen.basecamp.emacs.gui;
-            assert lib.any isEmacs chosen.environment.systemPackages;
-            assert lib.hasInfix "emacs-app-takeover" chosen.system.activationScripts.postActivation.text;
-            assert lib.hasInfix "eln-warm-store start" chosen.system.activationScripts.postActivation.text;
-            assert chosenHm.basecamp.emacs.package == chosen.basecamp.emacs.package;
-            assert !(lib.any isEmacs chosenHm.home.packages);
-            assert !off.basecamp.emacs.enable && !(lib.any isEmacs off.environment.systemPackages);
-            assert downstream.basecamp.emacs.enable && !downstream.basecamp.emacs.gui;
-            assert !(lib.hasInfix "emacs-app-takeover" downstream.system.activationScripts.postActivation.text);
-            assert linuxChosen.enable && !linuxChosen.gui;
-            assert !disabled.basecamp.emacs.enable;
-            assert !(lib.elem pkgs.emacs disabled.home.packages);
-            assert gui.basecamp.emacs.package == pkgs.${"emacs" + emacs.major};
-            assert nox.basecamp.emacs.package == pkgs.${"emacs" + emacs.major + "-nox"};
-            assert lib.versions.major gui.basecamp.emacs.package.version == emacs.major;
-            assert lean.basecamp.emacs.package == pkgs.${"emacs" + emacs.major + "-nox"}.override { withNativeCompilation = false; };
-            assert lib.all (name: !(lib.hasPrefix "emacs/" name)) (builtins.attrNames gui.xdg.configFile);
-            assert lib.all (name: !(lib.hasPrefix "emacs/" name)) (builtins.attrNames nox.xdg.configFile);
-            assert !(gui.home.file ? ".emacs");
-            assert !(gui.home.file ? ".emacs.d");
-            pkgs.runCommand "emacs-tests" {
-              nativeBuildInputs = [ pkgs.python3 pkgs.bash pkgs.coreutils ];
-              BASECAMP_WARM = "${warm}/bin/eln-warm-store";
-            } ''
-              cp -r ${./ci} ci
-              cp -r ${./lib} lib
-              python3 ci/test-emacs.py
-              touch "$out"
-            '';
         });
 
       # ------------------------------------------------------------------ macOS
@@ -303,12 +187,11 @@
                 exit 1
               fi
 
-              ${emacsSaved}
               ${karabinerSaved}
-              echo "darwin: building system configuration for user $user (emacs: $emacs, karabiner: $karabiner)"
+              echo "darwin: building system configuration for user $user (karabiner: $karabiner)"
               toplevel="$(${nixBin}/nix build --impure --no-link --print-out-paths \
                 --extra-experimental-features "nix-command flakes" \
-                --expr "((builtins.getFlake \"path:${self}\").lib.mkDarwin { user = \"$user\"; emacs = \"$emacs\"; karabiner = \"$karabiner\"; }).system")"
+                --expr "((builtins.getFlake \"path:${self}\").lib.mkDarwin { user = \"$user\"; karabiner = \"$karabiner\"; }).system")"
 
               current="$(readlink /run/current-system 2>/dev/null || true)"
               if [ "$current" = "$toplevel" ]; then
@@ -333,16 +216,12 @@
 
           # Read-only status. Deliberately does NOT evaluate or build the
           # system closure, so `nix run .#plan` stays instant.
-          # --no-emacs / --no-karabiner: for a downstream flake that sets
-          # basecamp.emacs / basecamp.karabiner itself (the rows show the
-          # setup app's choice, which it does not use).
           plan = pkgs.writeShellApplication {
             name = "plan";
             text = ''
-              no_emacs=0 no_karabiner=0
+              no_karabiner=0
               for a in "$@"; do
                 case "$a" in
-                  --no-emacs) no_emacs=1 ;;
                   --no-karabiner) no_karabiner=1 ;;
                 esac
               done
@@ -378,9 +257,6 @@
                   row "•" karabiner-rule "Korean-mode left modifiers -> karabiner.json" "via nix-darwin switch"
                 fi
               fi
-              if [ "$no_emacs" = 0 ]; then
-                ${emacsPlanRow "nix-darwin, /Applications/Nix Apps"}
-              fi
               echo ""
             '';
           };
@@ -394,16 +270,15 @@
                 case "$a" in
                   -y|--yes) assume_yes=1 ;;
                   -n|--dry-run) dry_run=1 ;;
-                  --emacs=*|--karabiner=*) ;;
+                  --karabiner=*) ;;
                   *) echo "unknown argument: $a" >&2; exit 1 ;;
                 esac
               done
-              ${emacsChoice}
               ${karabinerChoice}
 
               ${lib.getExe plan}
-              echo "emacs for this run: $emacs"
               echo "karabiner for this run: $karabiner"
+              ${emacsMoved}
               if [ "$dry_run" = 1 ]; then
                 echo "(dry run — nothing was changed)"
                 exit 0
@@ -424,8 +299,7 @@
               fi
 
               ${lib.getExe homebrew}
-              BASECAMP_EMACS="$emacs" ${lib.getExe darwin}
-              ${emacsSave}
+              ${lib.getExe darwin}
               ${karabinerSave}
               # The darwin step exits early when the system closure is already
               # current, but state outside the nix store (karabiner.json) can
@@ -439,7 +313,7 @@
           };
         in
         {
-          default = mkApp "Plan, confirm, and apply the macOS setup (Emacs optional: --emacs=gui|nox|none; Karabiner: --karabiner=on|off)" bootstrap;
+          default = mkApp "Plan, confirm, and apply the macOS setup (Karabiner: --karabiner=on|off)" bootstrap;
           plan = mkApp "Show module status (read-only)" plan;
           homebrew = mkApp "Install Homebrew if missing" homebrew;
           darwin = mkApp "Build and activate the nix-darwin system for the invoking user" darwin;
@@ -459,11 +333,10 @@
                 exit 1
               fi
 
-              ${emacsSaved}
-              echo "home: building home-manager configuration for $user ($HOME, emacs: $emacs)"
+              echo "home: building home-manager configuration for $user ($HOME)"
               out="$(${pkgs.nix}/bin/nix build --impure --no-link --print-out-paths \
                 --extra-experimental-features "nix-command flakes" \
-                --expr "((builtins.getFlake \"path:${self}\").lib.mkHome { user = \"$user\"; homeDirectory = \"$HOME\"; emacs = \"$emacs\"; }).activationPackage")"
+                --expr "((builtins.getFlake \"path:${self}\").lib.mkHome { user = \"$user\"; homeDirectory = \"$HOME\"; }).activationPackage")"
 
               "$out/activate"
             '';
@@ -478,18 +351,15 @@
                 case "$a" in
                   -y|--yes) assume_yes=1 ;;
                   -n|--dry-run) dry_run=1 ;;
-                  --emacs=*) ;;
                   *) echo "unknown argument: $a" >&2; exit 1 ;;
                 esac
               done
-              ${emacsChoice}
               row() { printf '  [%s] %-15s %-46s %s\n' "$@"; }
               echo ""
               echo "nix-basecamp · $(uname -s) ($(uname -m)) · target user: $(id -un)"
               echo ""
               row "•" home-manager "standalone home-manager" "activate new generation"
-              ${emacsPlanRow "home-manager"}
-              echo "emacs for this run: $emacs"
+              ${emacsMoved}
               if [ "$dry_run" = 1 ]; then
                 echo "(dry run — nothing was changed)"
                 exit 0
@@ -504,13 +374,12 @@
                   exit 1
                 fi
               fi
-              BASECAMP_EMACS="$emacs" ${lib.getExe home}
-              ${emacsSave}
+              ${lib.getExe home}
             '';
           };
         in
         {
-          default = mkApp "Plan, confirm, and apply the Linux setup (Emacs optional: --emacs=gui|nox|none)" setup;
+          default = mkApp "Plan, confirm, and apply the Linux setup" setup;
           home = mkApp "Build and activate the home-manager configuration for the invoking user" home;
         };
     };

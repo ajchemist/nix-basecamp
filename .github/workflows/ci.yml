@@ -67,8 +67,6 @@ jobs:
               - "flake.lock"
               - "lib/**"
               - "home/linux.nix"
-              - "home/emacs/**"
-              - "ci/test-emacs.py"
               - ".github/workflows/ci.yml"
               - ".github/actions/**"
             darwin:
@@ -93,8 +91,8 @@ jobs:
       # Tools come from the flake's locked nixpkgs.
       - name: actionlint (workflows, with shellcheck on run blocks)
         run: nix shell --inputs-from . nixpkgs#actionlint nixpkgs#shellcheck -c actionlint
-      - name: shellcheck (ci/, lib/)
-        run: nix run --inputs-from . nixpkgs#shellcheck -- ci/*.sh lib/*.sh
+      - name: shellcheck (ci/)
+        run: nix run --inputs-from . nixpkgs#shellcheck -- ci/*.sh
       - name: deadnix
         run: nix run --inputs-from . nixpkgs#deadnix -- --fail .
 
@@ -109,7 +107,7 @@ jobs:
         with: { flake-lock-artifact: "${{ inputs.flake-lock-artifact }}" }
       - name: Evaluate all outputs, all systems
         run: nix flake check --all-systems --no-build
-      - name: Build this system's checks (emacs, karabiner)
+      - name: Build this system's checks (karabiner)
         run: nix flake check
 
   build-linux:
@@ -133,7 +131,7 @@ jobs:
         with: { flake-lock-artifact: "${{ inputs.flake-lock-artifact }}" }
       - name: Evaluate all outputs, all systems
         run: nix flake check --all-systems --no-build
-      - name: Build this system's checks (emacs, karabiner)
+      - name: Build this system's checks (karabiner)
         run: nix flake check
       - name: Karabiner rule app (applies to runner HOME)
         run: ./ci/test-karabiner-rule.sh
@@ -199,19 +197,3 @@ jobs:
           nix run . -- --yes
           nix run .#karabiner-rule
           KARABINER_SNAPSHOT="$RUNNER_TEMP/karabiner.json" ./ci/assert-karabiner.sh off
-
-  # Lab measurement, macOS only (the vetting it pays for does not exist on
-  # Linux): the background warm-up of Emacs's built-in .eln, timed to the end.
-  # Long (~15 min of waiting): weekly and on demand, not on push, PR or
-  # flake-update.
-  eln-warm-measure:
-    if: inputs.flake-lock-artifact == '' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-    runs-on: macos-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/nix
-      - name: Apply the setup with a GUI Emacs
-        run: nix run . -- --yes --emacs=gui
-      - name: Measure the warm-up
-        run: ./ci/measure-eln-warm.sh

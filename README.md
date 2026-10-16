@@ -88,98 +88,26 @@ its default, `none`) and an existing `karabiner.json`, including basecamp's
 rule, is left as it is. Remove them by hand (`brew uninstall --cask
 karabiner-elements`) if you want them gone.
 
-## Optional Emacs
+## Emacs moved to emacs-camp
 
-Emacs is **off by default**. When chosen it is installed one way per OS
-([ADR 0001](docs/adr/0001-emacs-install-layers.md)): on macOS as a nix-darwin
-system package, with `Emacs.app` copied into `/Applications/Nix Apps`; on Linux
-through Home Manager. The setup command asks once on a
-terminal for `gui`, `nox` (terminal only) or `none`; the answer is saved in
-`~/.config/nix-basecamp/emacs` after a successful switch and reused afterwards.
+Basecamp no longer installs Emacs ([ADR 0002](docs/adr/0002-application-ownership.md)).
+[emacs-camp](https://github.com/ajchemist/emacs-camp) builds and installs it
+on top of these builders, along with its configuration. If an older basecamp
+saved an Emacs choice (`~/.config/nix-basecamp/emacs` is `gui` or `nox`), the
+setup prints a notice: the next switch removes the Emacs basecamp installed.
+Delete the file once Emacs comes from emacs-camp.
 
-```sh
-nix run github:ajchemist/nix-basecamp -- --emacs=gui      # or nox / none
-nix run github:ajchemist/nix-basecamp -- --dry-run        # shows the choice, changes nothing
-```
+## Contract for downstream flakes
 
-`--yes` skips confirmation; it does not opt you into an undecided Emacs (it
-stays `none` and is asked again on the next interactive run). `#darwin` and
-Linux `#home` use the saved choice.
-
-On macOS a GUI setup makes nix's `Emacs.app` the only one: Homebrew casks that install
-an `Emacs.app` (`emacs`, `emacs-app`, `emacs-mac`) are uninstalled through brew,
-and any other `Emacs.app` in `/Applications` or `~/Applications` is moved to
-`Emacs.app.before-basecamp` (never deleted). A `nox` setup leaves them alone.
-Basecamp provides no init, theme, keybindings, or package archive policy, and
-never touches `~/.emacs`, `~/.emacs.d` or `~/.config/emacs`.
-
-### Native Lisp warm-up (macOS)
-
-macOS vets every Mach-O the first time it is `dlopen`ed (~0.3 s per file,
-serialised, then cached per file). Emacs ships ~3000 ahead-of-time compiled
-`.eln` files, so without help the first use of each built-in feature stalls.
-Basecamp pays this once per Emacs store path, from nix-darwin's activation as
-the primary user, in the background (~15 min, no CPU; Emacs is usable
-meanwhile), with a small C program (libSystem only; no perl or python on the
-host). A second run while one is going is a no-op; a run
-cut short by a reboot restarts on the next setup.
-
-Linux has no such check, so nothing is warmed there (`warmProgram` exists on
-both for evaluation, but only macOS calls it). GitHub's macOS runners do not
-perform this check: CI's `eln-warm-measure` job (weekly and on demand) sees a
-fresh `.eln` open in ~0.001 s and all 3137 built-in ones warmed in ~20 s. On
-an ordinary Apple Silicon Mac the first open costs ~0.4 s per file and the
-warm-up takes ~15 min, so the job checks that the warm-up runs and finishes,
-not what it saves.
-
-### Version policy
-
-Basecamp pins the Emacs **major** (`lib/emacs.nix`, currently 31:
-`emacs31` / `emacs31-nox`). Inside a major, nixpkgs updates flow through with
-no change here. Basecamp's Emacs code changes only to move to the next major,
-or when nixpkgs drops the pinned one (evaluation then fails with nixpkgs' own
-message).
-
-### Contract for downstream flakes
-
-A downstream built on `lib.mkDarwin` / `lib.mkHome` gets both modules already
-imported. It sets only `enable`, `gui` and `nativeComp`, where the install
-happens: in the nix-darwin configuration on macOS, in Home Manager on Linux
-(and, on macOS, `basecamp.karabiner.enable`). Everything else
-is read-only and must be used as given; under nix-darwin the Home Manager
-module mirrors the system's values read-only, so the home side reads the same
-options on both OSes.
-
-```nix
-# macOS (nix-darwin module list)
-{ basecamp.emacs = { enable = true; gui = true; }; }
-# Linux (Home Manager module list)
-{ basecamp.emacs = { enable = true; gui = false; }; }
-# Sandboxes and images: no native compilation, so no gcc/libgccjit (~430 MB)
-{ basecamp.emacs = { enable = true; gui = false; nativeComp = false; }; }
-# macOS without Karabiner (nix-darwin module list)
-{ basecamp.karabiner.enable = false; }
-```
+Applications (such as emacs-camp) and personal setups build on these.
+Changing one is a breaking change, recorded in an ADR.
 
 | Provided | What downstream does with it |
 |---|---|
-| `darwinModules.emacs`, `homeModules.emacs` | Already imported by the builders; importing them again is deduplicated. |
-| `basecamp.emacs.major` (read-only) | Labels; never pins its own Emacs. |
-| `basecamp.emacs.package` (read-only) | The only Emacs: compile init files against it, never name an `emacs*` attribute. |
-| `basecamp.emacs.warmProgram` (read-only) | macOS only: `bin/eln-warm DIR...` for any `.eln` it produces (init files, packages); `bin/eln-warm-store status EMACS` for status. Never called on Linux, where nothing vets `.eln`. |
-| `lib.emacsMajor`, `lib.emacsPackage { system; gui; }`, `lib.emacsWarm { system; }` | The same values for code evaluated outside the module (a status command). |
-| `apps.<system>.plan` with `--no-emacs` | Embedding basecamp's plan without its Emacs row, which shows the setup app's choice rather than the downstream's settings. |
-| `basecamp.karabiner.enable` (nix-darwin, default `true`) | Set `false` to drop the Karabiner-Elements cask and the rule upsert; Karabiner is then left unmanaged, not uninstalled. |
-| `apps.aarch64-darwin.plan` with `--no-karabiner` | Embedding basecamp's plan without its Karabiner rows, for a downstream that sets `basecamp.karabiner.enable` itself. |
-
-`lib.mkDarwin`/`lib.mkHome` take `emacs = "gui" | "nox" | "none"` as defaults
-for `enable`/`gui`, and `lib.mkDarwin` takes `karabiner = "on" | "off"` as the
-default for `basecamp.karabiner.enable`; a downstream's own settings win. Neither module deploys or
-relocates init files. A downstream flake uses these modules and adds
-its own configuration on top.
-
-For testing an unpublished checkout, use `nix run path:.` (the `path:` form
-includes new, untracked files).
+| `lib.mkDarwin { user; system ? "aarch64-darwin"; karabiner ? "on"; modules ? []; }` | A nix-darwin system with Home Manager for `user`; application modules go in `modules`. |
+| `lib.mkHome { user; homeDirectory ? "/home/${user}"; system ? "x86_64-linux"; modules ? []; }` | A standalone Home Manager configuration (Linux). |
+| `basecamp.karabiner.enable` (nix-darwin, default `true`) | Set `false` to drop the Karabiner-Elements cask and the rule upsert; Karabiner is then left unmanaged, not uninstalled. `mkDarwin`'s `karabiner = "off"` only sets the default, so a downstream's own setting wins. |
+| `apps.aarch64-darwin.plan --no-karabiner` | Embeds basecamp's plan without its Karabiner rows, for a downstream that sets `basecamp.karabiner.enable` itself. |
 
 ## Target user is a runtime parameter
 
@@ -201,10 +129,7 @@ darwin/default.nix              # nix-darwin system config (homebrew, ...)
 darwin/karabiner.nix            # basecamp.karabiner.enable: cask + rule (on by default)
 home/darwin.nix                 # home-manager (karabiner rule activation, if enabled)
 home/linux.nix                  # home-manager (linux)
-darwin/emacs.nix                # opt-in Emacs, macOS: system package, warm-up, Emacs.app takeover
-home/emacs/default.nix          # opt-in Emacs, Linux install; read-only mirror under nix-darwin
 docs/adr/                       # design decisions
-lib/emacs.nix                   # Emacs contract: major, package, warmer, app takeover
 home/karabiner/*.json           # Karabiner rules
 lib/karabiner-upsert.nix        # shared jq upsert (app + home-manager activation)
 ci/                             # CI test and assertion scripts
@@ -217,6 +142,9 @@ ci/                             # CI test and assertion scripts
 nix run .#plan
 nix run .            # or: nix run .#darwin
 ```
+
+`nix run path:.` includes new, untracked files; a downstream tries an
+unpublished checkout with `--override-input basecamp path:../nix-basecamp`.
 
 ## Notes
 

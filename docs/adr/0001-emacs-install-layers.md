@@ -1,6 +1,6 @@
 # ADR 0001: Emacs install layers
 
-- Status: accepted
+- Status: superseded by [ADR 0002](0002-application-ownership.md)
 - Date: 2026-10-02
 
 ## Context
